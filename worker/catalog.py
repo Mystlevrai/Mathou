@@ -55,6 +55,9 @@ def _human(nbytes: int | None) -> str:
     return f"{x:.1f} To"
 
 
+_SITE_NAME = "aburame"
+
+
 def _page(title: str, body: str, depth: int) -> str:
     up = "../" * depth
     return (
@@ -62,7 +65,7 @@ def _page(title: str, body: str, depth: int) -> str:
         '<meta name="viewport" content="width=device-width,initial-scale=1">'
         f"<title>{_esc(title)}</title>"
         f'<link rel="stylesheet" href="{up}assets/style.css"></head><body>'
-        f'<header><a class="home" href="{up}index.html">mathou</a>'
+        f'<header><a class="home" href="{up}index.html">{_esc(_SITE_NAME)}</a>'
         + (f' <span class="crumb">/ {_esc(title)}</span>' if depth else "")
         + f"</header><main>{body}</main></body></html>"
     )
@@ -86,7 +89,7 @@ def _index_html(series: list[dict]) -> str:
             + f'<div class="meta"><div class="t">{_esc(s["title"])}</div>'
             + f'<div class="s">{n} saison{"s" if n > 1 else ""}</div></div></a>'
         )
-    return _page("mathou", f'<h1>Catalogue ({len(series)})</h1><div class="grid">{"".join(cards)}</div>', 0)
+    return _page(_SITE_NAME, f'<h1>Catalogue ({len(series)})</h1><div class="grid">{"".join(cards)}</div>', 0)
 
 
 def _series_html(s: dict) -> str:
@@ -111,7 +114,9 @@ def _series_html(s: dict) -> str:
     return _page(s["title"], body, 1)
 
 
-def build(out_dir: Path) -> None:
+def build(out_dir: Path, site_name: str = "aburame") -> None:
+    global _SITE_NAME
+    _SITE_NAME = site_name
     series = db.library()
     if out_dir.exists():
         shutil.rmtree(out_dir)

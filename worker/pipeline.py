@@ -126,7 +126,7 @@ def process(job_id: str, url: str, season: int | None, cfg: Config) -> None:
         tmdb = library.tmdb_lookup(title, cfg.tmdb_api_key)
         db.series_upsert(slug, title, tmdb.get("tmdb_id"), tmdb.get("poster_url"), tmdb.get("overview"))
         db.season_upsert(slug, season if season is not None else 0, zip_name, download_url, size, episodes)
-        catalog.build(cfg.catalog_local)
+        catalog.build(cfg.catalog_local, cfg.site_name)
         cat = _run([cfg.rclone_path, "sync", str(cfg.catalog_local),
                     f"{cfg.rclone_remote}:{cfg.b2_bucket}/catalog",
                     "--transfers", "8", "--stats-one-line"], timeout=600)

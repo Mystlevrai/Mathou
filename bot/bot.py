@@ -15,7 +15,7 @@ from discord import app_commands
 try:
     from dotenv import load_dotenv
 
-    load_dotenv()
+    load_dotenv(encoding="utf-8-sig")
 except ImportError:
     pass
 

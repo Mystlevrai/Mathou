@@ -9,7 +9,8 @@ from pathlib import Path
 try:
     from dotenv import load_dotenv
 
-    load_dotenv()
+    # utf-8-sig : tolere un BOM eventuel (PowerShell 5.1 en ajoute un avec -Encoding utf8)
+    load_dotenv(encoding="utf-8-sig")
 except ImportError:
     pass
 
@@ -71,6 +72,7 @@ class Config:
 
     tmdb_api_key: str
     catalog_local: Path
+    site_name: str
 
     max_queue: int
     keep_local: bool
@@ -97,6 +99,7 @@ class Config:
             b2_public_base=_req("B2_PUBLIC_BASE").rstrip("/"),
             tmdb_api_key=os.getenv("TMDB_API_KEY", "").strip(),
             catalog_local=Path(os.getenv("CATALOG_LOCAL", r"C:\mathou\catalog")).resolve(),
+            site_name=os.getenv("SITE_NAME", "aburame").strip() or "aburame",
             max_queue=_int("MAX_QUEUE", 20),
             keep_local=_bool("KEEP_LOCAL", False),
         )
