@@ -7,4 +7,5 @@ from config import Config
 
 if __name__ == "__main__":
     c = Config.load()
-    uvicorn.run("app:app", host=c.host, port=c.port, log_level="info")
+    # access_log=False : sinon le log est noye sous les GET /jobs du bot (poll toutes les 3s)
+    uvicorn.run("app:app", host=c.host, port=c.port, log_level="info", access_log=False)

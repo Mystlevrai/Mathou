@@ -38,23 +38,13 @@ def _dir_size(p: Path) -> int:
     return sum(f.stat().st_size for f in p.rglob("*") if f.is_file())
 
 
-def _zip_stored(src_dir: Path, dest_zip: Path) -> None:
-    dest_zip.parent.mkdir(parents=True, exist_ok=True)
-    with zipfile.ZipFile(dest_zip, "w", zipfile.ZIP_STORED, allowZip64=True) as z:
-        for f in sorted(src_dir.rglob("*")):
-            if f.is_file():
-                z.write(f, f.relative_to(src_dir.parent))
-
-
 def _dur(s: float) -> str:
     m, sec = divmod(int(s), 60)
     return f"{m}m{sec:02d}s" if m else f"{sec}s"
 
 
 def process(job_id: str, url: str, season: int | None, cfg: Config) -> None:
-    zips_dir = cfg.tool_output_dir.parent / "_mathou_zips"
     local_folder: Path | None = None
-    local_zip: Path | None = None
     try:
         cfg.tool_output_dir.mkdir(parents=True, exist_ok=True)
         before = _snapshot(cfg.tool_output_dir)
@@ -102,27 +92,41 @@ def process(job_id: str, url: str, season: int | None, cfg: Config) -> None:
         print(f"[{job_id}] serie={title!r} slug={slug} saison={season} "
               f"{episodes} ep. {size/1024**3:.1f} Go en {_dur(dl_secs)}", flush=True)
 
-        # 3. zip
-        db.job_update(job_id, status="zipping", series_slug=slug, size_bytes=size, dl_seconds=dl_secs)
+        # 3+4. zip streame directement vers B2 via `rclone rcat` -> AUCUN fichier zip
+        # local (le disque de la VM ne peut pas contenir source + zip).
         stem = f"{title} - Saison {season:02d}" if season is not None else title
         zip_name = f"{stem}.zip".translate(_BAD)
-        local_zip = zips_dir / zip_name
-        t1 = time.monotonic()
-        _zip_stored(local_folder, local_zip)
-        zip_secs = time.monotonic() - t1
+        dest = f"{cfg.rclone_remote}:{cfg.b2_bucket}/{slug}/{zip_name}"
+        db.job_update(job_id, status="uploading", series_slug=slug, size_bytes=size,
+                      dl_seconds=dl_secs, zip_name=zip_name)
+        print(f"[{job_id}] stream zip -> {dest}", flush=True)
 
-        # 4. upload B2
-        db.job_update(job_id, status="uploading", zip_name=zip_name, zip_seconds=zip_secs)
-        dest = f"{cfg.rclone_remote}:{cfg.b2_bucket}/{slug}/"
         t2 = time.monotonic()
-        rc = _run([cfg.rclone_path, "copy", str(local_zip), dest,
-                   "--transfers", "4", "--b2-upload-concurrency", "8",
-                   "--retries", "3", "--low-level-retries", "10",
-                   "--stats-one-line", "-v"], timeout=None)
+        rcat = subprocess.Popen(
+            [cfg.rclone_path, "rcat", dest,
+             "--b2-chunk-size", "100M", "--retries", "3", "--low-level-retries", "10"],
+            stdin=subprocess.PIPE, cwd=str(cfg.tool_cwd),
+        )
+        zip_err: Exception | None = None
+        try:
+            with zipfile.ZipFile(rcat.stdin, "w", zipfile.ZIP_STORED, allowZip64=True) as z:
+                for f in sorted(local_folder.rglob("*")):
+                    if f.is_file():
+                        z.write(f, f.relative_to(local_folder.parent))
+        except Exception as exc:  # noqa: BLE001
+            zip_err = exc
+        finally:
+            try:
+                rcat.stdin.close()
+            except Exception:  # noqa: BLE001
+                pass
+        rc_code = rcat.wait()
         up_secs = time.monotonic() - t2
-        log = _tail(log, rc.stdout, rc.stderr)
-        if rc.returncode != 0:
-            db.job_update(job_id, status="error", error=f"rclone (B2) code {rc.returncode}", log=log)
+        if zip_err is not None:
+            db.job_update(job_id, status="error", error=f"Erreur pendant le zip : {zip_err}", log=log)
+            return
+        if rc_code != 0:
+            db.job_update(job_id, status="error", error=f"rclone rcat a echoue (code {rc_code})", log=log)
             return
         download_url = f"{cfg.b2_public_base}/{slug}/{urllib.parse.quote(zip_name)}"
 
@@ -136,8 +140,7 @@ def process(job_id: str, url: str, season: int | None, cfg: Config) -> None:
                     "--transfers", "8", "--stats-one-line"], timeout=600)
         log = _tail(log, cat.stdout, cat.stderr)
 
-        timing = (f"dl {_dur(dl_secs)} | zip {_dur(zip_secs)} | "
-                  f"upload {_dur(up_secs)} | {size/1024**3:.1f} Go")
+        timing = (f"dl {_dur(dl_secs)} | zip+upload {_dur(up_secs)} | {size / 1024**3:.1f} Go")
         print(f"[{job_id}] {timing}", flush=True)
         db.job_update(job_id, status="done", download_url=download_url,
                       up_seconds=up_secs, log=_tail(log, timing))
@@ -145,13 +148,8 @@ def process(job_id: str, url: str, season: int | None, cfg: Config) -> None:
     except Exception as exc:  # noqa: BLE001
         db.job_update(job_id, status="error", error=f"Erreur interne : {exc}")
     finally:
-        if not cfg.keep_local:
-            for p in (local_zip, local_folder):
-                if p and p.exists():
-                    if p.is_dir():
-                        _rmtree(p)
-                    else:
-                        p.unlink(missing_ok=True)
+        if not cfg.keep_local and local_folder and local_folder.is_dir():
+            _rmtree(local_folder)
 
 
 def _rmtree(p: Path) -> None:
