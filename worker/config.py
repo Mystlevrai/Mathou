@@ -33,14 +33,16 @@ def _bool(name: str, default: bool) -> bool:
 
 
 def _json_list(name: str) -> list[str]:
-    raw = os.getenv(name, "").strip()
-    if not raw:
+    raw = os.getenv(name, "").strip().lstrip("﻿").strip().strip("'\"").strip()
+    if not raw or raw in ("[]", "[ ]"):
         return []
     try:
         val = json.loads(raw)
-        assert isinstance(val, list) and all(isinstance(x, str) for x in val)
-    except (json.JSONDecodeError, AssertionError) as exc:
-        raise RuntimeError(f"{name} doit etre un tableau JSON de chaines, ex : [\"--vostfr\"]") from exc
+    except json.JSONDecodeError:
+        # pas du JSON : on accepte une liste separee par des espaces (ex: --vostfr --hd)
+        return raw.split()
+    if not (isinstance(val, list) and all(isinstance(x, str) for x in val)):
+        raise RuntimeError(f"{name} doit etre un tableau JSON de chaines, ex : [\"--vostfr\"]")
     return val
 
 
