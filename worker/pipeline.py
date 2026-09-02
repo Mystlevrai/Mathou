@@ -27,15 +27,12 @@ def _tail(*chunks: str, limit: int = 6000) -> str:
     return "\n".join(c.strip() for c in chunks if c and c.strip())[-limit:]
 
 
-def _snapshot(d: Path) -> set[str]:
-    try:
-        return {p.name for p in d.iterdir()}
-    except FileNotFoundError:
-        return set()
-
-
 def _dir_size(p: Path) -> int:
     return sum(f.stat().st_size for f in p.rglob("*") if f.is_file())
+
+
+def _newest_mtime(p: Path) -> float:
+    return max((f.stat().st_mtime for f in p.rglob("*") if f.is_file()), default=0.0)
 
 
 def _dur(s: float) -> str:
@@ -47,7 +44,7 @@ def process(job_id: str, url: str, season: int | None, cfg: Config) -> None:
     local_folder: Path | None = None
     try:
         cfg.tool_output_dir.mkdir(parents=True, exist_ok=True)
-        before = _snapshot(cfg.tool_output_dir)
+        ignore_dirs = {cfg.tool_cwd.name, ".git", ".github", "__pycache__", "_mathou_zips"}
 
         # 1. cdlr
         cmd = [cfg.tool_path, cfg.tool_url_flag, url]
@@ -59,6 +56,7 @@ def process(job_id: str, url: str, season: int | None, cfg: Config) -> None:
         db.job_update(job_id, status="running", log=f"cmd> {cmd_line}")
 
         t0 = time.monotonic()
+        t_wall = time.time()
         try:
             proc = _run(cmd, cfg.tool_timeout, cfg.tool_cwd)
         except subprocess.TimeoutExpired:
@@ -77,14 +75,20 @@ def process(job_id: str, url: str, season: int | None, cfg: Config) -> None:
             db.job_update(job_id, status="error", error=f"cdlr code {proc.returncode}", log=log)
             return
 
-        # 2. dossier cree
-        new = [cfg.tool_output_dir / n for n in (_snapshot(cfg.tool_output_dir) - before)]
-        dirs = [p for p in new if p.is_dir()]
-        if not dirs:
+        # 2. le dossier cree/rempli par cdlr = le sous-dossier NON VIDE dont un fichier
+        #    a ete ecrit le plus recemment (robuste si un dossier du meme nom existait deja).
+        candidates = [
+            p for p in cfg.tool_output_dir.iterdir()
+            if p.is_dir() and not p.name.startswith(".") and p.name not in ignore_dirs
+        ]
+        # non vide ET rempli pendant CE job (evite de re-uploader un vieux dossier)
+        candidates = [p for p in candidates if _dir_size(p) > 0 and _newest_mtime(p) >= t_wall - 60]
+        if not candidates:
             db.job_update(job_id, status="error",
-                          error="cdlr s'est termine mais aucun nouveau dossier", log=log)
+                          error="cdlr s'est termine mais aucun dossier n'a ete rempli pendant le job",
+                          log=log)
             return
-        local_folder = max(dirs, key=lambda p: _dir_size(p))
+        local_folder = max(candidates, key=_newest_mtime)
         size = _dir_size(local_folder)
         episodes = sum(1 for f in local_folder.rglob("*") if f.suffix.lower() in VIDEO_EXT) or \
             sum(1 for f in local_folder.rglob("*") if f.is_file())
