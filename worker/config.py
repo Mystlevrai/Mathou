@@ -108,6 +108,6 @@ class Config:
             keep_local=_bool("KEEP_LOCAL", False),
             season_est_gb=float(os.getenv("SEASON_EST_GB", "").strip() or "14"),
             pre_job_kill=tuple(
-                x for x in os.getenv("PRE_JOB_KILL", "cdlr,chrome,chromedriver,ffmpeg").replace(" ", "").split(",") if x
+                x for x in os.getenv("PRE_JOB_KILL", "cdlr,ffmpeg").replace(" ", "").split(",") if x
             ),
         )
