@@ -1,0 +1,11 @@
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.env
+*.db
+*.db-wal
+*.db-shm
+# ancien layout (remplace par worker/)
+/vm/downloads/
+/downloads/

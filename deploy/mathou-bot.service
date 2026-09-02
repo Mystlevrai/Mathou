@@ -1,0 +1,15 @@
+[Unit]
+Description=mathou discord bot
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/mathou/bot
+ExecStart=/opt/mathou/bot/.venv/bin/python bot.py
+EnvironmentFile=/opt/mathou/bot/.env
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
