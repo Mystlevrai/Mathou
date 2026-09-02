@@ -74,8 +74,12 @@ def process(job_id: str, url: str, season: int | None, cfg: Config) -> None:
         except subprocess.TimeoutExpired:
             db.job_update(job_id, status="error", error=f"cdlr a depasse {cfg.tool_timeout}s")
             return
-        except FileNotFoundError:
-            db.job_update(job_id, status="error", error=f"Executable introuvable : {cfg.tool_path!r}")
+        except (FileNotFoundError, NotADirectoryError, OSError) as exc:
+            db.job_update(
+                job_id, status="error",
+                error=f"Impossible de lancer cdlr : {exc}. "
+                      f"exe={cfg.tool_path!r} cwd={cfg.tool_cwd!r}",
+            )
             return
         dl_secs = time.monotonic() - t0
         log = _tail(f"cmd> {cmd_line}", proc.stdout, proc.stderr)

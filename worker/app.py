@@ -48,7 +48,7 @@ def auth(
 ) -> None:
     if cfg.allowed_ips:
         ip = request.client.host if request.client else ""
-        if ip not in cfg.allowed_ips:
+        if ip not in cfg.allowed_ips and ip not in ("127.0.0.1", "::1", "localhost"):
             raise HTTPException(403, "IP non autorisee")
     token = authorization[7:].strip() if authorization.lower().startswith("bearer ") else ""
     token = token or x_auth_token.strip()
