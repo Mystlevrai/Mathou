@@ -336,7 +336,7 @@ client = Bot()
 
 @client.tree.command(name="dl", description="Telecharge une saison et la met en ligne")
 @app_commands.describe(lien="Lien de la saison/serie", nombre="Numero de la saison")
-@app_commands.checks.cooldown(1, float(DL_COOLDOWN), key=lambda i: i.user.id)
+@app_commands.checks.cooldown(1, float(DL_COOLDOWN), key=lambda i: 0)  # global : 1 /dl toutes les N s, tout le monde confondu
 async def dl(
     interaction: discord.Interaction,
     lien: str,
