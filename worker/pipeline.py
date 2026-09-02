@@ -24,6 +24,15 @@ def _run(cmd: list[str], timeout: int | None = None, cwd: Path | None = None) ->
     )
 
 
+def _run_tool(cmd: list[str], timeout: int | None, cwd: Path | None) -> subprocess.CompletedProcess:
+    """cdlr : stdio herite (-> worker.log), stdin neutre. Se comporte comme lance a la main
+    (la capture par pipes perturbe certains outils qui pilotent un navigateur)."""
+    return subprocess.run(
+        cmd, stdin=subprocess.DEVNULL,
+        timeout=timeout, cwd=str(cwd) if cwd else None, check=False,
+    )
+
+
 def _tail(*chunks: str, limit: int = 6000) -> str:
     return "\n".join(c.strip() for c in chunks if c and c.strip())[-limit:]
 
@@ -128,7 +137,7 @@ def process(job_id: str, url: str, season: int | None, cfg: Config) -> None:
         watcher = threading.Thread(target=_watch_dl, daemon=True)
         watcher.start()
         try:
-            proc = _run(cmd, cfg.tool_timeout, cfg.tool_cwd)
+            proc = _run_tool(cmd, cfg.tool_timeout, cfg.tool_cwd)
         except subprocess.TimeoutExpired:
             _stop.set()
             db.job_update(job_id, status="error", error=f"cdlr a depasse {cfg.tool_timeout}s")
@@ -144,9 +153,11 @@ def process(job_id: str, url: str, season: int | None, cfg: Config) -> None:
         finally:
             _stop.set()
         dl_secs = time.monotonic() - t0
-        log = _tail(f"cmd> {cmd_line}", proc.stdout, proc.stderr)
+        log = _tail(f"cmd> {cmd_line}")
         if proc.returncode != 0:
-            db.job_update(job_id, status="error", error=f"cdlr code {proc.returncode}", log=log)
+            db.job_update(job_id, status="error",
+                          error=f"cdlr a quitte avec le code {proc.returncode} (sortie dans worker.log)",
+                          log=log)
             return
 
         # 2. le dossier cree/rempli par cdlr = le sous-dossier NON VIDE dont un fichier
