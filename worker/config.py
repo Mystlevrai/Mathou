@@ -78,6 +78,8 @@ class Config:
 
     max_queue: int
     keep_local: bool
+    season_est_gb: float
+    pre_job_kill: tuple[str, ...]
 
     @staticmethod
     def load() -> "Config":
@@ -104,4 +106,8 @@ class Config:
             site_name=os.getenv("SITE_NAME", "aburame").strip() or "aburame",
             max_queue=_int("MAX_QUEUE", 20),
             keep_local=_bool("KEEP_LOCAL", False),
+            season_est_gb=float(os.getenv("SEASON_EST_GB", "").strip() or "14"),
+            pre_job_kill=tuple(
+                x for x in os.getenv("PRE_JOB_KILL", "cdlr,chrome,chromedriver,ffmpeg").replace(" ", "").split(",") if x
+            ),
         )

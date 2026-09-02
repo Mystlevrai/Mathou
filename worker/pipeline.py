@@ -36,6 +36,17 @@ def _newest_mtime(p: Path) -> float:
     return max((f.stat().st_mtime for f in p.rglob("*") if f.is_file()), default=0.0)
 
 
+def _kill(names: tuple[str, ...]) -> None:
+    """Tue d'eventuels process residuels d'un job precedent (verrous de profil Chrome...)."""
+    for name in names:
+        exe = name if name.lower().endswith(".exe") else f"{name}.exe"
+        try:
+            subprocess.run(["taskkill", "/F", "/T", "/IM", exe],
+                           capture_output=True, timeout=20, check=False)
+        except Exception:  # noqa: BLE001
+            pass
+
+
 class _CountingWriter:
     """Compte les octets ecrits vers le pipe rcat, et rapporte la progression."""
 
@@ -76,6 +87,12 @@ def process(job_id: str, url: str, season: int | None, cfg: Config) -> None:
         cfg.tool_output_dir.mkdir(parents=True, exist_ok=True)
         ignore_dirs = {cfg.tool_cwd.name, ".git", ".github", "__pycache__", "_mathou_zips"}
 
+        # 0. repartir propre : tuer d'eventuels residus (cdlr/chrome/... d'un job precedent)
+        if cfg.pre_job_kill:
+            print(f"[{job_id}] cleanup process : {', '.join(cfg.pre_job_kill)}", flush=True)
+            _kill(cfg.pre_job_kill)
+            time.sleep(2)
+
         # 1. cdlr
         cmd = [cfg.tool_path, cfg.tool_url_flag, url]
         if season is not None:
@@ -90,6 +107,8 @@ def process(job_id: str, url: str, season: int | None, cfg: Config) -> None:
         # pendant cdlr : thread qui rapporte la taille du dossier en cours (pas de total connu)
         _stop = threading.Event()
 
+        est_total = int(cfg.season_est_gb * 1024**3)
+
         def _watch_dl() -> None:
             while not _stop.wait(5):
                 try:
@@ -99,8 +118,10 @@ def process(job_id: str, url: str, season: int | None, cfg: Config) -> None:
                     ]
                     cands = [p for p in cands if _newest_mtime(p) >= t_wall - 60]
                     if cands:
-                        db.job_update(job_id, progress_bytes=_dir_size(max(cands, key=_newest_mtime)),
-                                      progress_total=None)
+                        cur = _dir_size(max(cands, key=_newest_mtime))
+                        # barre estimee : plafonne a 99% tant que cdlr n'a pas fini
+                        db.job_update(job_id, progress_bytes=min(cur, int(est_total * 0.99)),
+                                      progress_total=max(est_total, cur))
                 except Exception:  # noqa: BLE001
                     pass
 

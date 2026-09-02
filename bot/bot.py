@@ -39,6 +39,7 @@ ALLOWED_USER_IDS = {int(x) for x in os.getenv("ALLOWED_USER_IDS", "").replace(" 
 ALLOWED_ROLE_ID = _int_env("ALLOWED_ROLE_ID", 0)
 POLL_SECONDS = _int_env("POLL_SECONDS", 3)
 JOB_MAX_WAIT = _int_env("JOB_MAX_WAIT", 14400)
+DL_COOLDOWN = _int_env("DL_COOLDOWN", 10)
 
 STATUS_LABELS = {
     "queued": "\U0001f552 En file d'attente",
@@ -335,6 +336,7 @@ client = Bot()
 
 @client.tree.command(name="dl", description="Telecharge une saison et la met en ligne")
 @app_commands.describe(lien="Lien de la saison/serie", nombre="Numero de la saison")
+@app_commands.checks.cooldown(1, float(DL_COOLDOWN), key=lambda i: i.user.id)
 async def dl(
     interaction: discord.Interaction,
     lien: str,
@@ -366,6 +368,18 @@ async def dl(
     else:
         msg = await interaction.followup.send(embed=build_embed(url, nombre, state), wait=True)
     spawn(track(msg, url, nombre, job_id, interaction.user))
+
+
+@dl.error
+async def dl_error(interaction: discord.Interaction, error: app_commands.AppCommandError) -> None:
+    if isinstance(error, app_commands.CommandOnCooldown):
+        msg = f"⏳ Doucement — attends {error.retry_after:.0f}s avant un autre /dl."
+        if interaction.response.is_done():
+            await interaction.followup.send(msg, ephemeral=True)
+        else:
+            await interaction.response.send_message(msg, ephemeral=True)
+        return
+    raise error
 
 
 @client.tree.command(name="chercher", description="Cherche une serie dans le catalogue")
