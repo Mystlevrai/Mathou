@@ -166,6 +166,22 @@ def season_label(season) -> str:
     return f"Saison {int(season):02d}" if season is not None else "Saison ?"
 
 
+def progress_bar(frac: float, width: int = 18) -> str:
+    frac = max(0.0, min(1.0, frac))
+    filled = round(frac * width)
+    return "█" * filled + "░" * (width - filled)
+
+
+def progress_field(state: dict) -> tuple[str, str] | None:
+    pb, pt = state.get("progress_bytes"), state.get("progress_total")
+    if pb is None:
+        return None
+    if pt:
+        frac = pb / pt if pt else 0.0
+        return "Progression", f"`{progress_bar(frac)}` {frac * 100:.0f}%  ({human_size(pb)} / {human_size(pt)})"
+    return "Telecharge", human_size(pb)
+
+
 def build_embed(url: str, season, state: dict) -> discord.Embed:
     status = state.get("status", "queued")
     colour = {"done": discord.Colour.green(), "error": discord.Colour.red()}.get(
@@ -177,6 +193,10 @@ def build_embed(url: str, season, state: dict) -> discord.Embed:
         emb.add_field(name="Saison", value=str(season), inline=True)
     if state.get("size_bytes"):
         emb.add_field(name="Poids", value=human_size(state["size_bytes"]), inline=True)
+    if status in ("running", "uploading"):
+        pf = progress_field(state)
+        if pf:
+            emb.add_field(name=pf[0], value=pf[1], inline=False)
     if state.get("job_id"):
         emb.set_footer(text=f"job {state['job_id']}")
     if status == "done" and state.get("download_url"):
@@ -244,8 +264,15 @@ async def post_new(state: dict, season) -> None:
         await ch.send(line)
 
 
+def _render_key(state: dict) -> tuple:
+    """Change quand le statut change OU quand la progression avance d'un cran (~5%)."""
+    pb, pt = state.get("progress_bytes"), state.get("progress_total")
+    step = int(pb / pt * 20) if (pt and pb is not None) else (pb // (300 * 1024 * 1024) if pb else 0)
+    return (state.get("status"), step)
+
+
 async def track(message: discord.Message, url: str, season, job_id: str, requester) -> None:
-    last = None
+    last_key = None
     waited = 0
     while waited < JOB_MAX_WAIT:
         try:
@@ -255,8 +282,9 @@ async def track(message: discord.Message, url: str, season, job_id: str, request
             await asyncio.sleep(POLL_SECONDS)
             waited += POLL_SECONDS
             continue
-        if state.get("status") != last:
-            last = state["status"]
+        key = _render_key(state)
+        if key != last_key:
+            last_key = key
             with contextlib.suppress(discord.HTTPException):
                 await message.edit(embed=build_embed(url, season, state))
         if state.get("status") in {"done", "error"}:

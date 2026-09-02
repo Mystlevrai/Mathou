@@ -100,6 +100,8 @@ async def get_job(job_id: str):
         "zip_seconds": job.get("zip_seconds"),
         "up_seconds": job.get("up_seconds"),
         "download_url": job.get("download_url"),
+        "progress_bytes": job.get("progress_bytes"),
+        "progress_total": job.get("progress_total"),
         "error": job.get("error"),
         "log_tail": log[-1500:],
         "created_at": job["created_at"],

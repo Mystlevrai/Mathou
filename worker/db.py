@@ -27,6 +27,8 @@ CREATE TABLE IF NOT EXISTS jobs (
     zip_seconds   REAL,
     up_seconds    REAL,
     download_url  TEXT,
+    progress_bytes INTEGER,
+    progress_total INTEGER,
     created_at    REAL NOT NULL,
     updated_at    REAL NOT NULL
 );
@@ -69,9 +71,20 @@ def _conn() -> sqlite3.Connection:
     return c
 
 
+# colonnes ajoutees apres coup (ALTER si une vieille base existe deja)
+_MIGRATIONS = {
+    "jobs": {"progress_bytes": "INTEGER", "progress_total": "INTEGER"},
+}
+
+
 def init() -> None:
     with _conn() as c:
         c.executescript(_SCHEMA)
+        for table, cols in _MIGRATIONS.items():
+            existing = {r["name"] for r in c.execute(f"PRAGMA table_info({table})")}
+            for col, coltype in cols.items():
+                if col not in existing:
+                    c.execute(f"ALTER TABLE {table} ADD COLUMN {col} {coltype}")
 
 
 # --- jobs ---------------------------------------------------------------------
