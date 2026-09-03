@@ -8,6 +8,7 @@ import sqlite3
 import time
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlparse
 
 DB_PATH = Path(__file__).with_name("mathou.db")
 
@@ -17,6 +18,7 @@ CREATE TABLE IF NOT EXISTS jobs (
     url           TEXT NOT NULL,
     season        INTEGER,
     extra         TEXT,
+    vpn_country   TEXT,
     status        TEXT NOT NULL,
     error         TEXT,
     log           TEXT,
@@ -73,7 +75,7 @@ def _conn() -> sqlite3.Connection:
 
 # colonnes ajoutees apres coup (ALTER si une vieille base existe deja)
 _MIGRATIONS = {
-    "jobs": {"progress_bytes": "INTEGER", "progress_total": "INTEGER"},
+    "jobs": {"progress_bytes": "INTEGER", "progress_total": "INTEGER", "vpn_country": "TEXT"},
 }
 
 
@@ -89,13 +91,14 @@ def init() -> None:
 
 # --- jobs ---------------------------------------------------------------------
 
-def job_create(job_id: str, url: str, season: int | None, extra: str | None) -> None:
+def job_create(job_id: str, url: str, season: int | None, extra: str | None,
+               vpn_country: str | None = None) -> None:
     now = time.time()
     with _conn() as c:
         c.execute(
-            "INSERT INTO jobs (id, url, season, extra, status, created_at, updated_at) "
-            "VALUES (?,?,?,?,?,?,?)",
-            (job_id, url, season, extra, "queued", now, now),
+            "INSERT INTO jobs (id, url, season, extra, vpn_country, status, created_at, updated_at) "
+            "VALUES (?,?,?,?,?,?,?,?)",
+            (job_id, url, season, extra, vpn_country, "queued", now, now),
         )
 
 
@@ -120,6 +123,34 @@ def jobs_active() -> int:
             "SELECT COUNT(*) n FROM jobs WHERE status IN ('queued','running','zipping','uploading')"
         ).fetchone()
     return int(row["n"])
+
+
+_ACTIVE = ("queued", "running", "zipping", "uploading")
+
+
+def _norm_url(u: str) -> str:
+    """URL comparable : sans query/fragment, sans slash final, en minuscules."""
+    p = urlparse((u or "").strip())
+    return f"{p.scheme}://{p.netloc}{p.path.rstrip('/')}".lower()
+
+
+def job_find_duplicate(url: str, season: int | None) -> dict | None:
+    """Meme URL (normalisee) + meme saison qu'un job deja actif ou deja termine avec succes.
+    -> {'kind': 'active'|'done', ...} ou None. Un job actif est prioritaire."""
+    target = _norm_url(url)
+    with _conn() as c:
+        rows = [dict(r) for r in c.execute(
+            "SELECT id, url, season, status, download_url, series_slug, zip_name, size_bytes "
+            "FROM jobs ORDER BY updated_at DESC LIMIT 500"
+        )]
+    same = [r for r in rows if r["season"] == season and _norm_url(r["url"]) == target]
+    for r in same:
+        if r["status"] in _ACTIVE:
+            return {"kind": "active", **r}
+    for r in same:
+        if r["status"] == "done" and r["download_url"]:
+            return {"kind": "done", **r}
+    return None
 
 
 def jobs_reset_orphans() -> None:

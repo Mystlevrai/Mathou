@@ -1,6 +1,7 @@
 """Coeur d'un job : cdlr -> zip -> rclone(B2) -> upsert catalogue -> sync catalogue."""
 from __future__ import annotations
 
+import re
 import subprocess
 import threading
 import time
@@ -15,12 +16,23 @@ from config import Config
 
 VIDEO_EXT = {".mkv", ".mp4", ".avi", ".ts", ".m4v", ".webm", ".mov"}
 _BAD = str.maketrans({c: "_" for c in '\\/:*?"<>|'})
+# pays VPN : lettres/chiffres/espace/-/_ uniquement -> aucun metacaractere shell ne passe
+_VPN_COUNTRY_RE = re.compile(r"^[A-Za-z][A-Za-z0-9 _-]{0,30}$")
 
 
 def _run(cmd: list[str], timeout: int | None = None, cwd: Path | None = None) -> subprocess.CompletedProcess:
     return subprocess.run(
         cmd, capture_output=True, text=True, encoding="utf-8", errors="replace",
         timeout=timeout, cwd=str(cwd) if cwd else None, check=False,
+    )
+
+
+def _run_shell(cmd_str: str, timeout: int | None = None) -> subprocess.CompletedProcess:
+    """Commande VPN : template .env (peut contenir des && ), donc shell=True.
+    Le pays injecte a deja ete valide par _VPN_COUNTRY_RE (pas de metacaractere)."""
+    return subprocess.run(
+        cmd_str, shell=True, capture_output=True, text=True,
+        encoding="utf-8", errors="replace", timeout=timeout, check=False,
     )
 
 
@@ -90,8 +102,10 @@ def _dur(s: float) -> str:
     return f"{m}m{sec:02d}s" if m else f"{sec}s"
 
 
-def process(job_id: str, url: str, season: int | None, cfg: Config) -> None:
+def process(job_id: str, url: str, season: int | None, cfg: Config,
+            vpn_country: str | None = None) -> None:
     local_folder: Path | None = None
+    vpn_on = False
     try:
         cfg.tool_output_dir.mkdir(parents=True, exist_ok=True)
         ignore_dirs = {cfg.tool_cwd.name, ".git", ".github", "__pycache__", "_mathou_zips"}
@@ -101,6 +115,40 @@ def process(job_id: str, url: str, season: int | None, cfg: Config) -> None:
             print(f"[{job_id}] cleanup process : {', '.join(cfg.pre_job_kill)}", flush=True)
             _kill(cfg.pre_job_kill)
             time.sleep(2)
+
+        # 0.5 VPN (optionnel) : si un pays est demande, on se connecte avant cdlr.
+        vpn_country = (vpn_country or "").strip()
+        if vpn_country:
+            if not cfg.vpn_connect_cmd:
+                db.job_update(job_id, status="error",
+                              error="Option VPN demandee mais VPN_CONNECT_CMD absent de worker/.env")
+                return
+            if not _VPN_COUNTRY_RE.match(vpn_country):
+                db.job_update(job_id, status="error",
+                              error=f"Pays VPN invalide : {vpn_country!r} "
+                                    f"(lettres/chiffres/espace/-/_ uniquement)")
+                return
+            allowed = cfg.vpn_allowed_countries
+            if allowed and vpn_country.lower() not in allowed:
+                db.job_update(job_id, status="error",
+                              error=f"Pays VPN non autorise : {vpn_country}. "
+                                    f"Autorises : {', '.join(allowed)}")
+                return
+            conn_cmd = cfg.vpn_connect_cmd.replace("{country}", vpn_country)
+            print(f"[{job_id}] VPN connect -> {vpn_country}", flush=True)
+            try:
+                r = _run_shell(conn_cmd, cfg.vpn_timeout)
+            except subprocess.TimeoutExpired:
+                db.job_update(job_id, status="error",
+                              error=f"VPN : connexion a {vpn_country} > {cfg.vpn_timeout}s")
+                return
+            if r.returncode != 0:
+                db.job_update(job_id, status="error",
+                              error=f"VPN : echec connexion {vpn_country} (code {r.returncode}) "
+                                    f"{_tail(r.stdout, r.stderr)[-400:]}")
+                return
+            vpn_on = True
+            time.sleep(3)
 
         # 1. cdlr
         cmd = [cfg.tool_path, cfg.tool_url_flag, url]
@@ -246,6 +294,12 @@ def process(job_id: str, url: str, season: int | None, cfg: Config) -> None:
     except Exception as exc:  # noqa: BLE001
         db.job_update(job_id, status="error", error=f"Erreur interne : {exc}")
     finally:
+        if vpn_on and cfg.vpn_disconnect_cmd:
+            try:
+                _run_shell(cfg.vpn_disconnect_cmd, cfg.vpn_timeout)
+                print(f"[{job_id}] VPN disconnect", flush=True)
+            except Exception:  # noqa: BLE001
+                pass
         if not cfg.keep_local and local_folder and local_folder.is_dir():
             _rmtree(local_folder)
 

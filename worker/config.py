@@ -81,6 +81,11 @@ class Config:
     season_est_gb: float
     pre_job_kill: tuple[str, ...]
 
+    vpn_connect_cmd: str
+    vpn_disconnect_cmd: str
+    vpn_allowed_countries: tuple[str, ...]
+    vpn_timeout: int
+
     @staticmethod
     def load() -> "Config":
         ips = os.getenv("ALLOWED_IPS", "").replace(" ", "")
@@ -110,4 +115,10 @@ class Config:
             pre_job_kill=tuple(
                 x for x in os.getenv("PRE_JOB_KILL", "cdlr,ffmpeg").replace(" ", "").split(",") if x
             ),
+            vpn_connect_cmd=os.getenv("VPN_CONNECT_CMD", "").strip(),
+            vpn_disconnect_cmd=os.getenv("VPN_DISCONNECT_CMD", "").strip(),
+            vpn_allowed_countries=tuple(
+                x.lower() for x in os.getenv("VPN_ALLOWED_COUNTRIES", "").replace(" ", "").split(",") if x
+            ),
+            vpn_timeout=_int("VPN_TIMEOUT", 120),
         )

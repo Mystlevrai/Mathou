@@ -114,10 +114,12 @@ class VMClient:
         if self._session and not self._session.closed:
             await self._session.close()
 
-    async def submit(self, url: str, season: int | None) -> str:
+    async def submit(self, url: str, season: int | None, vpn: str | None = None) -> dict:
         payload: dict = {"url": url}
         if season is not None:
             payload["season"] = season
+        if vpn:
+            payload["vpn"] = vpn
         s = await self._s()
         async with s.post(f"{self.base}/jobs", json=payload) as r:
             data = await r.json()
@@ -125,7 +127,7 @@ class VMClient:
                 raise VMBusy(data.get("detail") or "file pleine")
             if r.status != 200:
                 raise RuntimeError(data.get("detail") or f"HTTP {r.status}")
-            return data["job_id"]
+            return data
 
     async def poll(self, job_id: str) -> dict:
         s = await self._s()
@@ -192,6 +194,8 @@ def build_embed(url: str, season, state: dict) -> discord.Embed:
     emb.add_field(name="Lien", value=url[:1024], inline=False)
     if season is not None:
         emb.add_field(name="Saison", value=str(season), inline=True)
+    if state.get("vpn_country"):
+        emb.add_field(name="VPN", value=str(state["vpn_country"]), inline=True)
     if state.get("size_bytes"):
         emb.add_field(name="Poids", value=human_size(state["size_bytes"]), inline=True)
     if status in ("running", "uploading"):
@@ -235,6 +239,8 @@ async def post_log(requester, url: str, season, state: dict) -> None:
     emb.add_field(name="Lien", value=url[:1024], inline=False)
     if season is not None:
         emb.add_field(name="Saison", value=str(season), inline=True)
+    if state.get("vpn_country"):
+        emb.add_field(name="VPN", value=str(state["vpn_country"]), inline=True)
     if state.get("series_slug"):
         emb.add_field(name="Serie", value=state["series_slug"], inline=True)
     if state.get("size_bytes"):
@@ -334,13 +340,28 @@ class Bot(discord.Client):
 client = Bot()
 
 
+VPN_CHOICES = [
+    app_commands.Choice(name="🇺🇸 Etats-Unis", value="us"),
+    app_commands.Choice(name="🇯🇵 Japon", value="jp"),
+    app_commands.Choice(name="🇫🇷 France", value="fr"),
+    app_commands.Choice(name="🇩🇪 Allemagne", value="de"),
+    app_commands.Choice(name="🇬🇧 Royaume-Uni", value="gb"),
+]
+
+
 @client.tree.command(name="dl", description="Telecharge une saison et la met en ligne")
-@app_commands.describe(lien="Lien de la saison/serie", nombre="Numero de la saison")
+@app_commands.describe(
+    lien="Lien de la saison/serie",
+    nombre="Numero de la saison",
+    vpn="Pays du VPN pour ce telechargement. Laisser vide = pas de VPN",
+)
+@app_commands.choices(vpn=VPN_CHOICES)
 @app_commands.checks.cooldown(1, float(DL_COOLDOWN), key=lambda i: 0)  # global : 1 /dl toutes les N s, tout le monde confondu
 async def dl(
     interaction: discord.Interaction,
     lien: str,
     nombre: app_commands.Range[int, 0, 100] | None = None,
+    vpn: app_commands.Choice[str] | None = None,
 ) -> None:
     if not is_allowed(interaction.user):
         await interaction.response.send_message("Non autorise.", ephemeral=True)
@@ -349,9 +370,10 @@ async def dl(
     if not url:
         await interaction.response.send_message("Lien invalide (http/https).", ephemeral=True)
         return
+    vpn_code = vpn.value if vpn else None
     await interaction.response.defer(thinking=True)
     try:
-        job_id = await vm.submit(url, nombre)
+        res = await vm.submit(url, nombre, vpn_code)
     except VMBusy:
         await interaction.edit_original_response(
             content="⏳ Un autre telechargement est en cours. Reessaie dans quelques minutes."
@@ -360,7 +382,37 @@ async def dl(
     except Exception as exc:  # noqa: BLE001
         await interaction.edit_original_response(content=f"Impossible de joindre la VM : {exc}")
         return
-    state = {"status": "queued", "job_id": job_id}
+
+    if res.get("status") == "duplicate_done":
+        emb = discord.Embed(title="✅ Deja dans le catalogue", colour=discord.Colour.green(),
+                            description="Cette saison a deja ete telechargee, inutile de relancer.")
+        emb.add_field(name="Lien", value=url[:1024], inline=False)
+        if nombre is not None:
+            emb.add_field(name="Saison", value=str(nombre), inline=True)
+        if res.get("size_bytes"):
+            emb.add_field(name="Poids", value=human_size(res["size_bytes"]), inline=True)
+        if res.get("download_url"):
+            emb.add_field(name="Telechargement (.zip)", value=res["download_url"][:1024], inline=False)
+        if CATALOG_URL:
+            emb.add_field(name="Catalogue", value=CATALOG_URL, inline=False)
+        await interaction.edit_original_response(embed=emb)
+        return
+
+    if res.get("status") == "duplicate_active":
+        where = f" Elle apparaitra dans <#{LIBRARY_CHANNEL_ID}> quand ce sera pret." if LIBRARY_CHANNEL_ID else ""
+        emb = discord.Embed(
+            title="⏳ Deja en cours", colour=discord.Colour.blurple(),
+            description="Cette saison est deja en file d'attente / en telechargement." + where,
+        )
+        emb.add_field(name="Lien", value=url[:1024], inline=False)
+        if nombre is not None:
+            emb.add_field(name="Saison", value=str(nombre), inline=True)
+        emb.set_footer(text=f"job {res.get('job_id', '?')}")
+        await interaction.edit_original_response(embed=emb)
+        return
+
+    job_id = res["job_id"]
+    state = {"status": "queued", "job_id": job_id, "vpn_country": vpn_code}
     if interaction.channel is not None:
         msg = await interaction.channel.send(embed=build_embed(url, nombre, state))
         with contextlib.suppress(discord.HTTPException):
