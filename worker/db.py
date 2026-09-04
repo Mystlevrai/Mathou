@@ -192,6 +192,64 @@ def season_upsert(series_slug: str, season: int, zip_name: str, download_url: st
         )
 
 
+def series_get(slug: str) -> dict | None:
+    with _conn() as c:
+        row = c.execute("SELECT * FROM series WHERE slug=?", (slug,)).fetchone()
+    return dict(row) if row else None
+
+
+def season_get(slug: str, season: int) -> dict | None:
+    with _conn() as c:
+        row = c.execute(
+            "SELECT * FROM seasons WHERE series_slug=? AND season=?", (slug, season)
+        ).fetchone()
+    return dict(row) if row else None
+
+
+def series_update(slug: str, **fields: Any) -> bool:
+    """Edition manuelle (titre/affiche/resume) depuis le panel admin. Ignore les champs
+    non reconnus et les valeurs None (pas touche)."""
+    allowed = {"title", "poster_url", "overview"}
+    fields = {k: v for k, v in fields.items() if k in allowed and v is not None}
+    if not fields:
+        return False
+    fields["updated_at"] = time.time()
+    cols = ", ".join(f"{k}=?" for k in fields)
+    with _conn() as c:
+        cur = c.execute(f"UPDATE series SET {cols} WHERE slug=?", (*fields.values(), slug))
+    return cur.rowcount > 0
+
+
+def season_update(slug: str, season: int, **fields: Any) -> bool:
+    allowed = {"zip_name", "download_url", "size_bytes", "episodes"}
+    fields = {k: v for k, v in fields.items() if k in allowed and v is not None}
+    if not fields:
+        return False
+    cols = ", ".join(f"{k}=?" for k in fields)
+    with _conn() as c:
+        cur = c.execute(
+            f"UPDATE seasons SET {cols} WHERE series_slug=? AND season=?",
+            (*fields.values(), slug, season),
+        )
+    return cur.rowcount > 0
+
+
+def series_delete(slug: str) -> None:
+    with _conn() as c:
+        c.execute("DELETE FROM seasons WHERE series_slug=?", (slug,))
+        c.execute("DELETE FROM series WHERE slug=?", (slug,))
+
+
+def season_delete(slug: str, season: int) -> None:
+    with _conn() as c:
+        c.execute("DELETE FROM seasons WHERE series_slug=? AND season=?", (slug, season))
+
+
+def tmdb_delete(query: str) -> None:
+    with _conn() as c:
+        c.execute("DELETE FROM tmdb_cache WHERE query=?", (query,))
+
+
 def library() -> list[dict]:
     """Toutes les series avec leurs saisons, pret pour le generateur de catalogue."""
     with _conn() as c:

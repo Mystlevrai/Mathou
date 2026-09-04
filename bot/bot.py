@@ -459,6 +459,14 @@ async def catalogue(interaction: discord.Interaction) -> None:
         await interaction.response.send_message("CATALOG_URL non configure.", ephemeral=True)
 
 
+@client.tree.command(name="admin", description="Lien du panel admin du catalogue (prive)")
+async def admin(interaction: discord.Interaction) -> None:
+    if not is_allowed(interaction.user):
+        await interaction.response.send_message("Non autorise.", ephemeral=True)
+        return
+    await interaction.response.send_message(f"{VM_API_BASE}/admin", ephemeral=True)
+
+
 @client.tree.command(name="cancel", description="Annule un job (id visible en pied d'encadre)")
 @app_commands.describe(job="L'identifiant du job")
 async def cancel(interaction: discord.Interaction, job: str) -> None:

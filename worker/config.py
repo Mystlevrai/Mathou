@@ -86,6 +86,8 @@ class Config:
     vpn_allowed_countries: tuple[str, ...]
     vpn_timeout: int
 
+    admin_token: str
+
     @staticmethod
     def load() -> "Config":
         ips = os.getenv("ALLOWED_IPS", "").replace(" ", "")
@@ -121,4 +123,5 @@ class Config:
                 x.lower() for x in os.getenv("VPN_ALLOWED_COUNTRIES", "").replace(" ", "").split(",") if x
             ),
             vpn_timeout=_int("VPN_TIMEOUT", 120),
+            admin_token=os.getenv("ADMIN_TOKEN", "").strip(),
         )

@@ -8,6 +8,7 @@ from urllib.parse import urlparse
 from fastapi import Depends, FastAPI, Header, HTTPException, Request
 from pydantic import BaseModel, field_validator
 
+import admin
 import db
 from config import Config
 from jobqueue import Runner
@@ -39,6 +40,7 @@ async def lifespan(_: FastAPI):
 
 
 app = FastAPI(title="mathou worker v2", lifespan=lifespan)
+app.include_router(admin.build_router(cfg))
 
 
 def auth(
