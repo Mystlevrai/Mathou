@@ -103,10 +103,10 @@ def _series_html(s: dict) -> str:
     rows = []
     for se in sorted(s["seasons"], key=lambda x: x["season"] or 0):
         num = se["season"]
-        label = f"Saison {num:02d}" if num is not None else "Saison ?"
+        label = se.get("label") or (f"Saison {num:02d}" if num is not None else "Saison ?")
         eps = f' &middot; {se["episodes"]} ep.' if se.get("episodes") else ""
         rows.append(
-            f'<div class="season"><div><b>{label}</b>'
+            f'<div class="season"><div><b>{_esc(label)}</b>'
             f'<div class="info">{_human(se.get("size_bytes"))}{eps}</div></div>'
             f'<a class="dl" href="{_esc(se["download_url"])}">Telecharger le .zip</a></div>'
         )

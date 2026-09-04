@@ -49,6 +49,9 @@ label{font-size:12px;color:var(--mut);display:block;margin:10px 0 4px}
 .season{display:flex;align-items:center;justify-content:space-between;gap:10px;background:#11141a;border:1px solid var(--line);border-radius:8px;padding:10px 12px;margin-top:8px}
 .season .info{font-size:13px}
 .season .mut{color:var(--mut);font-size:12px}
+.season .left{flex:1;min-width:0}
+.season .left input{margin-bottom:4px}
+.season .actions{display:flex;gap:8px;flex:none}
 .msg{font-size:13px;margin-top:10px}
 .msg.ok{color:var(--ok)}
 .msg.bad{color:var(--bad)}
@@ -150,12 +153,20 @@ function openPanel(slug) {
   const s = LIB.find(x => x.slug === slug);
   if (!s) return;
   const panel = document.getElementById("panel");
-  const seasons = s.seasons.map(se => `
+  const seasons = s.seasons.map(se => {
+    const dflt = "Saison " + String(se.season).padStart(2, "0");
+    return `
     <div class="season">
-      <div><div class="info">Saison ${String(se.season).padStart(2,"0")}</div>
-      <div class="mut">${human(se.size_bytes)}${se.episodes ? " &middot; " + se.episodes + " ep." : ""}</div></div>
-      <button class="bad" onclick="deleteSeason('${esc(slug)}', ${se.season})">Supprimer</button>
-    </div>`).join("") || '<p class="mut">Aucune saison.</p>';
+      <div class="left">
+        <input type="text" id="lbl_${se.season}" value="${esc(se.label || dflt)}" placeholder="${esc(dflt)}">
+        <div class="mut">${human(se.size_bytes)}${se.episodes ? " &middot; " + se.episodes + " ep." : ""}</div>
+      </div>
+      <div class="actions">
+        <button class="ghost" onclick="saveSeasonLabel('${esc(slug)}', ${se.season})">Renommer</button>
+        <button class="bad" onclick="deleteSeason('${esc(slug)}', ${se.season})">Supprimer</button>
+      </div>
+    </div>`;
+  }).join("") || '<p class="mut">Aucune saison.</p>';
   panel.innerHTML = `
     <div class="panel">
       <h2>${esc(s.title)}</h2>
@@ -217,6 +228,16 @@ async function deleteSeries(slug) {
   } catch (e) { setMsg("topMsg", e.message, false); }
 }
 
+async function saveSeasonLabel(slug, season) {
+  const val = document.getElementById(`lbl_${season}`).value.trim();
+  try {
+    await api(`/seasons/${encodeURIComponent(slug)}/${season}`, { method: "PATCH", body: JSON.stringify({ label: val }) });
+    await load();
+    openPanel(slug);
+    setMsg("panelMsg", "Saison renommee.", true);
+  } catch (e) { setMsg("panelMsg", e.message, false); }
+}
+
 async function deleteSeason(slug, season) {
   const purge = confirm("Supprimer aussi le .zip sur B2 (definitif) ?\nOK = oui, Annuler = juste retirer du catalogue.");
   if (!confirm("Confirme la suppression de la saison " + season + " ?")) return;
@@ -250,6 +271,10 @@ class SeriesPatch(BaseModel):
     title: str | None = None
     poster_url: str | None = None
     overview: str | None = None
+
+
+class SeasonPatch(BaseModel):
+    label: str | None = None
 
 
 def build_router(cfg: Config) -> APIRouter:
@@ -305,6 +330,15 @@ def build_router(cfg: Config) -> APIRouter:
                 raise HTTPException(500, f"Suppression B2 echouee : {r.stderr[-500:]}")
         db.series_delete(slug)
         storage.publish_catalog(cfg)
+        return {"ok": True}
+
+    @router.patch("/admin/api/seasons/{slug}/{season}", dependencies=admin_dep)
+    async def api_season_patch(slug: str, season: int, body: SeasonPatch):
+        if not db.season_get(slug, season):
+            raise HTTPException(404, "Saison inconnue")
+        changed = db.season_update(slug, season, label=body.label)
+        if changed:
+            storage.publish_catalog(cfg)
         return {"ok": True}
 
     @router.delete("/admin/api/seasons/{slug}/{season}", dependencies=admin_dep)

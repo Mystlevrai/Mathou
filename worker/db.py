@@ -47,6 +47,7 @@ CREATE TABLE IF NOT EXISTS series (
 CREATE TABLE IF NOT EXISTS seasons (
     series_slug   TEXT NOT NULL,
     season        INTEGER NOT NULL,
+    label         TEXT,
     zip_name      TEXT,
     download_url  TEXT,
     size_bytes    INTEGER,
@@ -76,6 +77,7 @@ def _conn() -> sqlite3.Connection:
 # colonnes ajoutees apres coup (ALTER si une vieille base existe deja)
 _MIGRATIONS = {
     "jobs": {"progress_bytes": "INTEGER", "progress_total": "INTEGER", "vpn_country": "TEXT"},
+    "seasons": {"label": "TEXT"},
 }
 
 
@@ -221,7 +223,7 @@ def series_update(slug: str, **fields: Any) -> bool:
 
 
 def season_update(slug: str, season: int, **fields: Any) -> bool:
-    allowed = {"zip_name", "download_url", "size_bytes", "episodes"}
+    allowed = {"zip_name", "download_url", "size_bytes", "episodes", "label"}
     fields = {k: v for k, v in fields.items() if k in allowed and v is not None}
     if not fields:
         return False
