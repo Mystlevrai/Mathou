@@ -185,7 +185,8 @@ def process(job_id: str, url: str, season: int | None, cfg: Config,
         watcher = threading.Thread(target=_watch_dl, daemon=True)
         watcher.start()
         try:
-            proc = _run_tool(cmd, cfg.tool_timeout, cfg.tool_cwd)
+            # TOOL_TIMEOUT=0 -> aucune limite (gros dl lents ; un vrai blocage gele alors la file)
+            proc = _run_tool(cmd, cfg.tool_timeout or None, cfg.tool_cwd)
         except subprocess.TimeoutExpired:
             _stop.set()
             db.job_update(job_id, status="error", error=f"cdlr a depasse {cfg.tool_timeout}s")

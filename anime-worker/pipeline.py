@@ -214,7 +214,9 @@ def process(job_id: str, url: str, cfg: Config, vpn_country: str | None = None,
         watcher = threading.Thread(target=_watch_dl, daemon=True)
         watcher.start()
         try:
-            proc = _run_tool(cmd, cfg.tool_timeout, cfg.tool_cwd)
+            # TOOL_TIMEOUT=0 -> aucune limite (pour les gros dl lents ; attention : un vrai
+            # blocage de l'outil gele alors la file jusqu'a un kill manuel)
+            proc = _run_tool(cmd, cfg.tool_timeout or None, cfg.tool_cwd)
         except subprocess.TimeoutExpired:
             _stop.set()
             db.job_update(job_id, status="error", error=f"l'outil a depasse {cfg.tool_timeout}s")
