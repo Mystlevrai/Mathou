@@ -236,6 +236,37 @@ def season_update(slug: str, season: int, **fields: Any) -> bool:
     return cur.rowcount > 0
 
 
+def seasons_merge(src_slug: str, dst_slug: str) -> None:
+    """Deplace toutes les saisons de src vers dst (renumerote en cas de collision,
+    en gardant le numero d'origine dans le label si aucun label perso n'existait),
+    puis supprime la serie source. Ne touche a aucun fichier B2 (download_url reste
+    valide, il pointe deja vers le bon .zip peu importe le series_slug en base)."""
+    with _conn() as c:
+        existing = {r["season"] for r in c.execute(
+            "SELECT season FROM seasons WHERE series_slug=?", (dst_slug,)
+        )}
+        rows = [dict(r) for r in c.execute(
+            "SELECT * FROM seasons WHERE series_slug=?", (src_slug,)
+        )]
+        next_num = (max(existing) + 1) if existing else 1
+        now = time.time()
+        for row in rows:
+            num = row["season"]
+            label = row.get("label") or (f"Saison {num:02d}" if num is not None else None)
+            if num is None or num in existing:
+                num = next_num
+                next_num += 1
+            existing.add(num)
+            c.execute(
+                "INSERT INTO seasons (series_slug, season, label, zip_name, download_url, "
+                "size_bytes, episodes, added_at) VALUES (?,?,?,?,?,?,?,?)",
+                (dst_slug, num, label, row["zip_name"], row["download_url"],
+                 row["size_bytes"], row["episodes"], row.get("added_at") or now),
+            )
+        c.execute("DELETE FROM seasons WHERE series_slug=?", (src_slug,))
+        c.execute("DELETE FROM series WHERE slug=?", (src_slug,))
+
+
 def series_delete(slug: str) -> None:
     with _conn() as c:
         c.execute("DELETE FROM seasons WHERE series_slug=?", (slug,))

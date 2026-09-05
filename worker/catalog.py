@@ -35,6 +35,7 @@ h1 { font-size:20px; margin:0 0 20px; }
 .season { display:flex; align-items:center; justify-content:space-between; gap:16px; background:var(--card); border:1px solid var(--line); border-radius:10px; padding:12px 16px; }
 .season .dl { background:var(--acc); color:#fff; padding:8px 14px; border-radius:8px; font-weight:600; font-size:13px; white-space:nowrap; }
 .season .info { color:var(--mut); font-size:13px; }
+.search { width:100%; max-width:420px; display:block; background:var(--card); border:1px solid var(--line); color:var(--fg); border-radius:10px; padding:10px 14px; font:14px inherit; margin-bottom:18px; }
 .hero { display:flex; gap:20px; margin-bottom:8px; }
 .hero .poster { width:150px; flex:none; border-radius:10px; }
 .hero p { color:var(--mut); margin:8px 0 0; }
@@ -84,12 +85,22 @@ def _index_html(series: list[dict]) -> str:
     for s in series:
         n = len(s["seasons"])
         cards.append(
-            f'<a class="card" href="{_esc(s["slug"])}/index.html">'
+            f'<a class="card" data-title="{_esc(s["title"].lower())}" href="{_esc(s["slug"])}/index.html">'
             + _poster_div(s.get("poster_url"), s["title"])
             + f'<div class="meta"><div class="t">{_esc(s["title"])}</div>'
             + f'<div class="s">{n} saison{"s" if n > 1 else ""}</div></div></a>'
         )
-    return _page(_SITE_NAME, f'<h1>Catalogue ({len(series)})</h1><div class="grid">{"".join(cards)}</div>', 0)
+    search = (
+        '<input class="search" id="q" type="search" placeholder="Rechercher une serie...">'
+        '<script>'
+        'document.getElementById("q").addEventListener("input",function(e){'
+        'var q=e.target.value.trim().toLowerCase();'
+        'document.querySelectorAll("#grid .card").forEach(function(el){'
+        'el.style.display = el.dataset.title.indexOf(q) !== -1 ? "" : "none";});});'
+        "</script>"
+    )
+    body = f'<h1>Catalogue ({len(series)})</h1>{search}<div class="grid" id="grid">{"".join(cards)}</div>'
+    return _page(_SITE_NAME, body, 0)
 
 
 def _series_html(s: dict) -> str:

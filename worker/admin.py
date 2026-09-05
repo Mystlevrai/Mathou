@@ -30,7 +30,7 @@ button{cursor:pointer;background:var(--acc);color:#fff;border:0;border-radius:8p
 button.bad{background:var(--bad)}
 button.ghost{background:transparent;border:1px solid var(--line);color:var(--fg)}
 button:disabled{opacity:.5;cursor:wait}
-input[type=text],textarea{width:100%;background:#11141a;border:1px solid var(--line);color:var(--fg);border-radius:8px;padding:8px 10px;font:13px/1.4 inherit}
+input[type=text],textarea,select{width:100%;background:#11141a;border:1px solid var(--line);color:var(--fg);border-radius:8px;padding:8px 10px;font:13px/1.4 inherit}
 textarea{min-height:70px;resize:vertical}
 label{font-size:12px;color:var(--mut);display:block;margin:10px 0 4px}
 #login{max-width:360px;margin:80px auto;text-align:center}
@@ -182,6 +182,13 @@ function openPanel(slug) {
         <button class="ghost" onclick="refreshTmdb('${esc(slug)}')">Rafraichir TMDB</button>
         <button class="bad" onclick="deleteSeries('${esc(slug)}')">Supprimer la serie</button>
       </div>
+      <div class="row">
+        <select id="mergeTarget">
+          <option value="">Fusionner dans...</option>
+          ${LIB.filter(o => o.slug !== slug).map(o => `<option value="${esc(o.slug)}">${esc(o.title)}</option>`).join("")}
+        </select>
+        <button class="ghost" onclick="mergeSeries('${esc(slug)}')">Fusionner</button>
+      </div>
       <p id="panelMsg" class="msg"></p>
       <h3 style="margin-top:20px;font-size:14px">Saisons</h3>
       ${seasons}
@@ -214,6 +221,18 @@ async function refreshTmdb(slug) {
     await load();
     openPanel(slug);
     setMsg("panelMsg", "TMDB rafraichi.", true);
+  } catch (e) { setMsg("panelMsg", e.message, false); }
+}
+
+async function mergeSeries(slug) {
+  const target = document.getElementById("mergeTarget").value;
+  if (!target) { setMsg("panelMsg", "Choisis une serie cible.", false); return; }
+  if (!confirm("Fusionner cette serie dans la serie choisie ?\nSes saisons seront deplacees (renumerotees si collision) puis cette serie sera retiree du catalogue. Les fichiers B2 ne sont pas touches.")) return;
+  try {
+    await api(`/series/${encodeURIComponent(slug)}/merge`, { method: "POST", body: JSON.stringify({ into: target }) });
+    document.getElementById("panel").innerHTML = "";
+    await load();
+    setMsg("topMsg", "Fusion effectuee.", true);
   } catch (e) { setMsg("panelMsg", e.message, false); }
 }
 
@@ -277,6 +296,10 @@ class SeasonPatch(BaseModel):
     label: str | None = None
 
 
+class MergeBody(BaseModel):
+    into: str
+
+
 def build_router(cfg: Config) -> APIRouter:
     router = APIRouter()
 
@@ -319,6 +342,18 @@ def build_router(cfg: Config) -> APIRouter:
         db.series_update(slug, poster_url=info.get("poster_url"), overview=info.get("overview"))
         storage.publish_catalog(cfg)
         return {"ok": True, "tmdb": info}
+
+    @router.post("/admin/api/series/{slug}/merge", dependencies=admin_dep)
+    async def api_series_merge(slug: str, body: MergeBody):
+        if slug == body.into:
+            raise HTTPException(400, "Source et cible identiques")
+        if not db.series_get(slug):
+            raise HTTPException(404, "Serie source inconnue")
+        if not db.series_get(body.into):
+            raise HTTPException(404, "Serie cible inconnue")
+        db.seasons_merge(slug, body.into)
+        storage.publish_catalog(cfg)
+        return {"ok": True}
 
     @router.delete("/admin/api/series/{slug}", dependencies=admin_dep)
     async def api_series_delete(slug: str, purge_b2: bool = False):
