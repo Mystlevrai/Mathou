@@ -317,7 +317,10 @@ def _render_key(state: dict) -> tuple:
 async def track(message: discord.Message, url: str, job_id: str, requester) -> None:
     last_key = None
     waited = 0
-    while waited < JOB_MAX_WAIT:
+    # JOB_MAX_WAIT=0 -> suivi illimite (gros dl via sources lentes). Le suivi s'arrete
+    # de toute facon des que le worker marque le job done/error (y compris orphelin
+    # nettoye au redemarrage du worker).
+    while JOB_MAX_WAIT <= 0 or waited < JOB_MAX_WAIT:
         try:
             state = await vm.poll(job_id)
         except Exception as exc:  # noqa: BLE001
