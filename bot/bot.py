@@ -43,7 +43,7 @@ DL_COOLDOWN = _int_env("DL_COOLDOWN", 10)
 
 STATUS_LABELS = {
     "queued": "\U0001f552 En file d'attente",
-    "running": "⚙️ Telechargement (cdlr)",
+    "running": "⚙️ Telechargement",
     "zipping": "\U0001f4e6 Compression",
     "uploading": "☁️ Envoi sur B2",
     "done": "✅ Termine",
@@ -114,10 +114,8 @@ class VMClient:
         if self._session and not self._session.closed:
             await self._session.close()
 
-    async def submit(self, url: str, season: int | None, vpn: str | None = None) -> dict:
+    async def submit(self, url: str, vpn: str | None = None) -> dict:
         payload: dict = {"url": url}
-        if season is not None:
-            payload["season"] = season
         if vpn:
             payload["vpn"] = vpn
         s = await self._s()
@@ -185,15 +183,15 @@ def progress_field(state: dict) -> tuple[str, str] | None:
     return "Telecharge", human_size(pb)
 
 
-def build_embed(url: str, season, state: dict) -> discord.Embed:
+def build_embed(url: str, state: dict) -> discord.Embed:
     status = state.get("status", "queued")
     colour = {"done": discord.Colour.green(), "error": discord.Colour.red()}.get(
         status, discord.Colour.blurple()
     )
     emb = discord.Embed(title=STATUS_LABELS.get(status, status), colour=colour)
     emb.add_field(name="Lien", value=url[:1024], inline=False)
-    if season is not None:
-        emb.add_field(name="Saison", value=str(season), inline=True)
+    if state.get("season") is not None:
+        emb.add_field(name="Saison", value=str(state["season"]), inline=True)
     if state.get("vpn_country"):
         emb.add_field(name="VPN", value=str(state["vpn_country"]), inline=True)
     if state.get("size_bytes"):
@@ -225,7 +223,7 @@ async def _channel(cid: int):
     return ch
 
 
-async def post_log(requester, url: str, season, state: dict) -> None:
+async def post_log(requester, url: str, state: dict) -> None:
     ch = await _channel(LOG_CHANNEL_ID)
     if ch is None:
         return
@@ -237,8 +235,8 @@ async def post_log(requester, url: str, season, state: dict) -> None:
     )
     emb.add_field(name="Demande par", value=f"{requester.mention} (`{requester}`)", inline=False)
     emb.add_field(name="Lien", value=url[:1024], inline=False)
-    if season is not None:
-        emb.add_field(name="Saison", value=str(season), inline=True)
+    if state.get("season") is not None:
+        emb.add_field(name="Saison", value=str(state["season"]), inline=True)
     if state.get("vpn_country"):
         emb.add_field(name="VPN", value=str(state["vpn_country"]), inline=True)
     if state.get("series_slug"):
@@ -258,13 +256,13 @@ async def post_log(requester, url: str, season, state: dict) -> None:
         await ch.send(embed=emb)
 
 
-async def post_new(state: dict, season) -> None:
+async def post_new(state: dict) -> None:
     ch = await _channel(LIBRARY_CHANNEL_ID)
     if ch is None or state.get("status") != "done" or not state.get("download_url"):
         return
     serie = state.get("series_slug") or "?"
     size = human_size(state.get("size_bytes"))
-    line = f"\U0001f195 **{serie}** — {season_label(season)} — {size}\n{state['download_url']}"
+    line = f"\U0001f195 **{serie}** — {season_label(state.get('season'))} — {size}\n{state['download_url']}"
     if CATALOG_URL:
         line += f"\nCatalogue : {CATALOG_URL}"
     with contextlib.suppress(discord.HTTPException):
@@ -272,13 +270,13 @@ async def post_new(state: dict, season) -> None:
 
 
 def _render_key(state: dict) -> tuple:
-    """Change quand le statut change OU quand la progression avance d'un cran (~5%)."""
+    """Change quand le statut change, que la saison se resout, OU que la progression avance (~5%)."""
     pb, pt = state.get("progress_bytes"), state.get("progress_total")
     step = int(pb / pt * 20) if (pt and pb is not None) else (pb // (300 * 1024 * 1024) if pb else 0)
-    return (state.get("status"), step)
+    return (state.get("status"), state.get("season"), step)
 
 
-async def track(message: discord.Message, url: str, season, job_id: str, requester) -> None:
+async def track(message: discord.Message, url: str, job_id: str, requester) -> None:
     last_key = None
     waited = 0
     while waited < JOB_MAX_WAIT:
@@ -293,18 +291,18 @@ async def track(message: discord.Message, url: str, season, job_id: str, request
         if key != last_key:
             last_key = key
             with contextlib.suppress(discord.HTTPException):
-                await message.edit(embed=build_embed(url, season, state))
+                await message.edit(embed=build_embed(url, state))
         if state.get("status") in {"done", "error"}:
-            await post_log(requester, url, season, state)
-            await post_new(state, season)
+            await post_log(requester, url, state)
+            await post_new(state)
             return
         await asyncio.sleep(POLL_SECONDS)
         waited += POLL_SECONDS
     timeout_state = {"status": "error", "job_id": job_id,
                      "error": f"Toujours pas fini apres {JOB_MAX_WAIT // 60} min, j'arrete de suivre."}
     with contextlib.suppress(discord.HTTPException):
-        await message.edit(embed=build_embed(url, season, timeout_state))
-    await post_log(requester, url, season, timeout_state)
+        await message.edit(embed=build_embed(url, timeout_state))
+    await post_log(requester, url, timeout_state)
 
 
 intents = discord.Intents.default()
@@ -349,10 +347,9 @@ VPN_CHOICES = [
 ]
 
 
-@client.tree.command(name="dl", description="Telecharge une saison et la met en ligne")
+@client.tree.command(name="dl", description="Telecharge une saison (anime-sama/nakanime) et la met en ligne")
 @app_commands.describe(
-    lien="Lien de la saison/serie",
-    nombre="Numero de la saison",
+    lien="URL complete de la saison (ex: https://anime-sama.fr/catalogue/<anime>/saison1/vostfr/)",
     vpn="Pays du VPN pour ce telechargement. Laisser vide = pas de VPN",
 )
 @app_commands.choices(vpn=VPN_CHOICES)
@@ -360,7 +357,6 @@ VPN_CHOICES = [
 async def dl(
     interaction: discord.Interaction,
     lien: str,
-    nombre: app_commands.Range[int, 0, 100] | None = None,
     vpn: app_commands.Choice[str] | None = None,
 ) -> None:
     if not is_allowed(interaction.user):
@@ -373,7 +369,7 @@ async def dl(
     vpn_code = vpn.value if vpn else None
     await interaction.response.defer(thinking=True)
     try:
-        res = await vm.submit(url, nombre, vpn_code)
+        res = await vm.submit(url, vpn_code)
     except VMBusy:
         await interaction.edit_original_response(
             content="⏳ Un autre telechargement est en cours. Reessaie dans quelques minutes."
@@ -387,8 +383,8 @@ async def dl(
         emb = discord.Embed(title="✅ Deja dans le catalogue", colour=discord.Colour.green(),
                             description="Cette saison a deja ete telechargee, inutile de relancer.")
         emb.add_field(name="Lien", value=url[:1024], inline=False)
-        if nombre is not None:
-            emb.add_field(name="Saison", value=str(nombre), inline=True)
+        if res.get("season") is not None:
+            emb.add_field(name="Saison", value=str(res["season"]), inline=True)
         if res.get("size_bytes"):
             emb.add_field(name="Poids", value=human_size(res["size_bytes"]), inline=True)
         if res.get("download_url"):
@@ -405,8 +401,6 @@ async def dl(
             description="Cette saison est deja en file d'attente / en telechargement." + where,
         )
         emb.add_field(name="Lien", value=url[:1024], inline=False)
-        if nombre is not None:
-            emb.add_field(name="Saison", value=str(nombre), inline=True)
         emb.set_footer(text=f"job {res.get('job_id', '?')}")
         await interaction.edit_original_response(embed=emb)
         return
@@ -414,12 +408,12 @@ async def dl(
     job_id = res["job_id"]
     state = {"status": "queued", "job_id": job_id, "vpn_country": vpn_code}
     if interaction.channel is not None:
-        msg = await interaction.channel.send(embed=build_embed(url, nombre, state))
+        msg = await interaction.channel.send(embed=build_embed(url, state))
         with contextlib.suppress(discord.HTTPException):
             await interaction.delete_original_response()
     else:
-        msg = await interaction.followup.send(embed=build_embed(url, nombre, state), wait=True)
-    spawn(track(msg, url, nombre, job_id, interaction.user))
+        msg = await interaction.followup.send(embed=build_embed(url, state), wait=True)
+    spawn(track(msg, url, job_id, interaction.user))
 
 
 @dl.error

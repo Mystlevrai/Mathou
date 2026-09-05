@@ -27,9 +27,9 @@ class Runner:
             except asyncio.CancelledError:
                 pass
 
-    async def submit(self, url: str, season: int | None, vpn_country: str | None = None) -> str:
+    async def submit(self, url: str, vpn_country: str | None = None) -> str:
         job_id = uuid.uuid4().hex[:12]
-        db.job_create(job_id, url, season, None, vpn_country)
+        db.job_create(job_id, url, None, vpn_country)
         await self.queue.put(job_id)
         return job_id
 
@@ -41,7 +41,7 @@ class Runner:
             db.job_update(job_id, status="error", error="Annule avant demarrage")
             return "annule"
         if job["status"] in {"running", "zipping", "uploading"}:
-            return "en cours"  # tuer cdlr.exe = manuel sur la VM, cf README
+            return "en cours"  # tuer l'outil = manuel sur la VM, cf README
         return job["status"]
 
     async def _loop(self) -> None:
@@ -53,7 +53,7 @@ class Runner:
                 continue
             self.current = job_id
             try:
-                await asyncio.to_thread(pipeline.process, job_id, job["url"], job["season"],
+                await asyncio.to_thread(pipeline.process, job_id, job["url"],
                                         self.cfg, job.get("vpn_country"))
             finally:
                 self.current = None

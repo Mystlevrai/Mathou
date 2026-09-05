@@ -46,10 +46,6 @@ def _json_list(name: str) -> list[str]:
     return val
 
 
-# Serie = tout ce qui precede un marqueur de saison dans le nom du dossier.
-DEFAULT_SERIES_REGEX = r"^(?P<title>.+?)(?:[\s._\-]+(?:S|SAISON|SEASON)[\s._\-]*\d+.*)?$"
-
-
 @dataclass(frozen=True)
 class Config:
     api_token: str
@@ -57,15 +53,13 @@ class Config:
     port: int
     allowed_ips: tuple[str, ...]
 
-    tool_path: str
+    tool_python: str
+    tool_script: Path
     tool_cwd: Path
     tool_output_dir: Path
-    tool_url_flag: str
-    tool_season_flag: str
+    tool_player: str
     tool_extra: list[str]
     tool_timeout: int
-
-    series_regex: str
 
     rclone_path: str
     rclone_remote: str
@@ -96,14 +90,13 @@ class Config:
             host=os.getenv("HOST", "0.0.0.0"),
             port=_int("PORT", 8756),
             allowed_ips=tuple(x for x in ips.split(",") if x),
-            tool_path=_req("TOOL_PATH"),
+            tool_python=_req("TOOL_PYTHON"),
+            tool_script=Path(_req("TOOL_SCRIPT")).resolve(),
             tool_cwd=Path(_req("TOOL_CWD")).resolve(),
             tool_output_dir=Path(_req("TOOL_OUTPUT_DIR")).resolve(),
-            tool_url_flag=os.getenv("TOOL_URL_FLAG", "--url").strip(),
-            tool_season_flag=os.getenv("TOOL_SEASON_FLAG", "--saison").strip(),
+            tool_player=os.getenv("TOOL_PLAYER", "sendvid").strip() or "sendvid",
             tool_extra=_json_list("TOOL_EXTRA"),
             tool_timeout=_int("TOOL_TIMEOUT", 7200),
-            series_regex=os.getenv("SERIES_REGEX", "").strip() or DEFAULT_SERIES_REGEX,
             rclone_path=os.getenv("RCLONE_PATH", "rclone"),
             rclone_remote=os.getenv("RCLONE_REMOTE", "b2").strip(),
             b2_bucket=_req("B2_BUCKET"),
@@ -115,7 +108,7 @@ class Config:
             keep_local=_bool("KEEP_LOCAL", False),
             season_est_gb=float(os.getenv("SEASON_EST_GB", "").strip() or "14"),
             pre_job_kill=tuple(
-                x for x in os.getenv("PRE_JOB_KILL", "cdlr,ffmpeg").replace(" ", "").split(",") if x
+                x for x in os.getenv("PRE_JOB_KILL", "ffmpeg").replace(" ", "").split(",") if x
             ),
             vpn_connect_cmd=os.getenv("VPN_CONNECT_CMD", "").strip(),
             vpn_disconnect_cmd=os.getenv("VPN_DISCONNECT_CMD", "").strip(),

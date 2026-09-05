@@ -60,7 +60,6 @@ def auth(
 
 class JobIn(BaseModel):
     url: str
-    season: int | None = None
     vpn: str | None = None
 
     @field_validator("url")
@@ -79,17 +78,18 @@ async def healthz():
 
 @app.post("/jobs", dependencies=[Depends(auth)])
 async def create_job(body: JobIn):
-    # deduplication : meme saison deja en ligne ou deja en cours -> pas de 2e job
-    dup = db.job_find_duplicate(body.url, body.season)
+    # deduplication : meme URL (saison/langue deja dedans) deja en ligne ou en cours -> pas de 2e job
+    dup = db.job_find_duplicate(body.url)
     if dup and dup["kind"] == "done":
         return {"job_id": dup["id"], "status": "duplicate_done",
                 "download_url": dup["download_url"], "series_slug": dup["series_slug"],
-                "zip_name": dup["zip_name"], "size_bytes": dup["size_bytes"]}
+                "zip_name": dup["zip_name"], "size_bytes": dup["size_bytes"],
+                "season": dup.get("season")}
     if dup and dup["kind"] == "active":
         return {"job_id": dup["id"], "status": "duplicate_active"}
     if db.jobs_active() >= cfg.max_queue:
         raise HTTPException(429, "File pleine, reessaie plus tard")
-    job_id = await runner.submit(body.url, body.season, (body.vpn or "").strip() or None)
+    job_id = await runner.submit(body.url, (body.vpn or "").strip() or None)
     return {"job_id": job_id, "status": "queued"}
 
 

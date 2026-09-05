@@ -1,9 +1,14 @@
 # Worker en session interactive (pas NSSM)
 
-`cdlr.exe` pilote un navigateur -> il lui faut un **bureau**. Un service Windows
-(NSSM) tourne en session 0 sans bureau : cdlr y echoue (`[WinError 2]`).
+Cette approche datait de `cdlr.exe`, qui pilotait un navigateur et avait donc
+besoin d'un **bureau** (un service NSSM tourne en session 0, sans bureau).
+Depuis le passage a Anime-Downloader (requests + ffmpeg, pas de navigateur),
+cette contrainte n'existe plus : un vrai service Windows (NSSM) redeviendrait
+possible. On garde quand meme la tache planifiee ci-dessous pour l'instant
+(deja en place, deja fiable grace au mutex anti-doublon dans `run.py`) -
+migrer vers NSSM est une amelioration a part, pas necessaire.
 
-Solution : la VM se **connecte automatiquement** au demarrage, et une **tache
+La VM se **connecte automatiquement** au demarrage, et une **tache
 planifiee "a l'ouverture de session"** lance le worker dans cette session.
 Ca survit au reboot ; on peut se deconnecter du RDP (sans se **deconnecter** de
 Windows) et le worker continue.

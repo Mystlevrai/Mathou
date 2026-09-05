@@ -1,4 +1,4 @@
-"""Parsing du nom de serie depuis le dossier cree par cdlr, + lookup TMDB (cache)."""
+"""Slugification + lookup TMDB (cache)."""
 from __future__ import annotations
 
 import json
@@ -14,18 +14,6 @@ def slugify(text: str) -> str:
     text = unicodedata.normalize("NFKD", text).encode("ascii", "ignore").decode()
     text = re.sub(r"[^\w\s-]", "", text).strip().lower()
     return re.sub(r"[\s_\-]+", "-", text) or "divers"
-
-
-def parse_series(folder_name: str, regex: str) -> tuple[str, str]:
-    """(titre, slug) depuis le nom du dossier. `regex` doit exposer un groupe (?P<title>...)."""
-    name = folder_name.strip()
-    try:
-        m = re.match(regex, name, re.IGNORECASE)
-    except re.error:
-        m = None
-    raw = m.group("title") if (m and m.groupdict().get("title")) else name
-    title = re.sub(r"\s{2,}", " ", raw.strip(" .-_")) or name
-    return title, slugify(title)
 
 
 TMDB_SEARCH = "https://api.themoviedb.org/3/search/tv"

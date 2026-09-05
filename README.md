@@ -1,15 +1,21 @@
 # mathou
 
-Bot Discord + worker qui télécharge des saisons (via `cdlr.exe`), les zippe,
-les met sur Backblaze B2, et tient un catalogue web (grille + affiches TMDB).
+Bot Discord + worker qui télécharge des saisons (anime-sama/nakanime, via
+[Anime-Downloader](https://github.com/SertraFurr/Anime-Downloader)), les
+zippe, les met sur Backblaze B2, et tient un catalogue web (grille + affiches
+TMDB, recherche, panel admin).
 
 Voir **[ARCHITECTURE.md](ARCHITECTURE.md)** pour la vue d'ensemble et les décisions.
 
 ```
-/dl <url> nombre:<saison>   →  bot  →  worker (VM Windows)
-                                        cdlr → zip → rclone B2 → catalogue
-                                ← lien .zip + lien catalogue + récap #logs
+/dl <url-complete-avec-saison>   →  bot  →  worker (VM Windows)
+                                             Anime-Downloader → zip → rclone B2 → catalogue
+                                     ← lien .zip + lien catalogue + récap #logs
 ```
+
+L'URL doit déjà contenir la saison/langue (ex :
+`https://anime-sama.fr/catalogue/<anime>/saison1/vostfr/`) — pas de paramètre
+saison séparé, l'outil et le worker le déduisent du chemin.
 
 ## Machines
 
@@ -50,7 +56,23 @@ git push -u origin main --force        # écrase le repo (il n'a que PRIVACY.md)
 
 https://www.themoviedb.org/signup → Paramètres → **API** → clé v3.
 
-### 4. Worker (sur la VM Windows)
+### 4. Anime-Downloader (l'outil de telechargement, sur la VM Windows)
+
+Clone séparé de mathou — c'est un outil externe, pas vendorisé dans ce repo :
+```powershell
+cd C:\mathou
+git clone https://github.com/SertraFurr/Anime-Downloader.git anime-downloader
+cd anime-downloader
+python -m venv .venv
+.\.venv\Scripts\python.exe -m pip install -r requirements.txt
+```
+Puis lance-le **une fois à la main** (`..\.venv\Scripts\python.exe main.py`) pour
+passer l'étape Cloudflare si elle se présente (elle demande un cookie `cf_clearance`
++ ton User-Agent, sauvegardés dans `src/utils/config/config.json`) — sinon le
+premier job lancé par le worker plantera dessus (pas d'invite possible en tâche
+de fond). `ffmpeg` doit être sur le PATH de la VM.
+
+### 5. Worker (sur la VM Windows)
 
 ```powershell
 cd C:\
@@ -82,7 +104,7 @@ New-NetFirewallRule -DisplayName "mathou worker" -Direction Inbound -Action Allo
   -Protocol TCP -LocalPort 8756 -RemoteAddress 216.201.76.142
 ```
 
-### 5. Bot (sur le VPS Linux)
+### 6. Bot (sur le VPS Linux)
 
 ```bash
 ssh -i <clé> root@216.201.76.142
@@ -126,16 +148,20 @@ powershell -File C:\mathou\deploy\deploy-worker.ps1
 
 | Commande | Effet |
 |---|---|
-| `/dl lien:<url> nombre:<n>` | télécharge la saison `n`, la met en ligne |
+| `/dl lien:<url> [vpn:<pays>]` | télécharge la saison (URL complète, saison incluse), la met en ligne |
 | `/chercher nom:<texte>` | cherche une série dans le catalogue |
 | `/catalogue` | renvoie le lien du catalogue |
 | `/cancel job:<id>` | annule un job **en file d'attente** (id en pied d'encadré) |
 
 ### Annuler un job **déjà démarré**
 
-`/cancel` ne stoppe qu'un job en attente. Pour un job en cours, sur la VM :
+`/cancel` ne stoppe qu'un job en attente. Pour un job en cours, sur la VM —
+**ne pas tuer tous les `python.exe`** (ça tuerait aussi le worker), cibler par
+ligne de commande :
 ```powershell
-Stop-Process -Name cdlr, ffmpeg, rclone -Force -ErrorAction SilentlyContinue
+Get-CimInstance Win32_Process -Filter "CommandLine LIKE '%main.py%'" |
+  ForEach-Object { Stop-Process -Id $_.ProcessId -Force }
+Stop-Process -Name ffmpeg, rclone -Force -ErrorAction SilentlyContinue
 ```
 Le worker le marquera en échec, la file repart. Supprime le dossier partiel
 dans `TOOL_OUTPUT_DIR` s'il en reste un.
@@ -168,9 +194,12 @@ remettre dans `bot/.env`.
   depuis le VPS. Sinon : service worker arrêté, mauvais port, règle pare-feu.
 - **403 "IP non autorisee"** : `ALLOWED_IPS` (worker) ≠ IP réelle du bot
   (`curl ifconfig.me` sur le VPS).
-- **"aucun nouveau dossier"** : cdlr n'a rien créé dans `TOOL_OUTPUT_DIR`, ou un
-  dossier partiel d'un job précédent le masque → le supprimer.
+- **"le dossier attendu est vide ou introuvable"** : l'outil n'a rien créé
+  (vérifie `worker.log` pour son erreur réelle — souvent Cloudflare : relance
+  `main.py` à la main une fois pour repasser le cookie, cf étape 4).
+- **Job plante immédiatement avec une trace Cloudflare/`input()`** : les cookies
+  `cf_clearance` de l'outil ont expiré → relance `main.py` à la main sur la VM.
 - **Catalogue sans affiches** : `TMDB_API_KEY` absente/invalide, ou le titre
-  parsé ne matche pas TMDB. Ajuste `SERIES_REGEX`.
+  deviné (depuis le slug de l'URL) ne matche pas TMDB → renomme-le dans `/admin`.
 - **Upload B2 lent** : vérifier `rclone lsd b2:` OK ; augmenter
   `--b2-upload-concurrency` dans `worker/pipeline.py` si la ligne le permet.
