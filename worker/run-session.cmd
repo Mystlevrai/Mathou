@@ -1,5 +1,5 @@
 @echo off
-REM Lance le worker en boucle (redemarre s'il crashe).
+REM Lance le worker dans la session interactive (cdlr a besoin d'un bureau).
 REM Appele par la tache planifiee "mathou-worker" a l'ouverture de session.
 set PYTHONUNBUFFERED=1
 cd /d C:\mathou\worker

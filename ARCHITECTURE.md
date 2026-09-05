@@ -6,19 +6,13 @@ réorganise, ajoute B2 + catalogue, supprime la dette.
 ## Objectif
 
 ```
-/dl <url-saison-complete> [vpn]   (Discord)
-   -> le worker télécharge la saison avec Anime-Downloader (anime-sama/nakanime)
+/dl <url-saison> nombre:<N> [extra]   (Discord)
+   -> le worker télécharge la saison N avec cdlr.exe
    -> zippe la saison
    -> upload le .zip sur Backblaze B2
-   -> génère/actualise un catalogue web (grille + affiches TMDB, recherche, admin)
+   -> génère/actualise un catalogue web (grille + affiches TMDB)
    -> le bot poste : lien du .zip + lien du catalogue, et un récap dans #logs
 ```
-
-(v3 : l'outil de téléchargement est passé de `cdlr.exe` (Crunchyroll) à
-[Anime-Downloader](https://github.com/SertraFurr/Anime-Downloader)
-(anime-sama/nakanime) — l'URL contient déjà la saison/langue, donc plus de
-paramètre `nombre` séparé ; le worker déduit `series_slug`/`season` de l'URL
-elle-même, plus de parsing de nom de dossier.)
 
 Une personne veut une saison = **un** `/dl`, **un** lien de téléchargement.
 
@@ -29,7 +23,8 @@ Une personne veut une saison = **un** `/dl`, **un** lien de téléchargement.
 | Stockage | **Backblaze B2**, bucket public, région EU | ~6 $/To, egress 3× gratuit, pas de bridage "projet neuf" |
 | Format livré | **1 `.zip` par saison** | B2 n'a pas de "télécharger le dossier". Le zip = 1 lien = toute la saison |
 | Déploiement | **git pull + restart** | fini le scp / copier-coller RDP |
-| Série/Saison | dérivées de l'URL anime-sama/nakanime elle-même | l'outil écrit `<anime>/<saison>/` d'après l'URL ; pas de parsing de nom de dossier, pas de devinette |
+| Série | parsée depuis le nom du dossier `cdlr` | (regex configurable) |
+| Saison | = paramètre `nombre` de `/dl` (déjà fiable) | pas de devinette |
 | Affiches | **TMDB** (clé API gratuite), résultat mis en cache | grille avec vignettes |
 | Worker au boot | **service Windows via NSSM** | survit reboot / fermeture RDP |
 
@@ -47,7 +42,7 @@ mathou/
 ├── worker/
 │   ├── app.py             # FastAPI : POST /jobs, GET /jobs/{id}, GET /library
 │   ├── queue.py           # file sérielle, 1 job à la fois
-│   ├── pipeline.py        # Anime-Downloader -> zip -> rclone(B2) -> catalogue
+│   ├── pipeline.py        # cdlr -> zip -> rclone(B2) -> catalogue
 │   ├── library.py         # parsing série, modèle series/seasons, TMDB (cache)
 │   ├── catalog.py         # génère le site statique (grille + pages série/saison)
 │   ├── db.py              # SQLite : jobs, series, tmdb_cache
@@ -89,13 +84,15 @@ HOST=0.0.0.0
 PORT=8756
 ALLOWED_IPS=<ip-publique-bot>
 
-TOOL_PYTHON=C:\mathou\anime-downloader\.venv\Scripts\python.exe
-TOOL_SCRIPT=C:\mathou\anime-downloader\main.py
-TOOL_CWD=C:\mathou\anime-downloader
-TOOL_OUTPUT_DIR=C:\mathou\anime-downloader\videos   # <anime>/<saison>/ y apparait
-TOOL_PLAYER=sendvid
+TOOL_PATH=C:\...\cdlr\cdlr.exe
+TOOL_CWD=C:\...\cdlr
+TOOL_OUTPUT_DIR=C:\...\cdlr       # cdlr écrit son dossier ici
+TOOL_URL_FLAG=--url
+TOOL_SEASON_FLAG=--saison         # le VRAI flag de saison de cdlr
 TOOL_EXTRA=                       # args fixes toujours ajoutés (JSON liste)
 TOOL_TIMEOUT=7200
+
+SERIES_REGEX=^(?P<title>.+?)(?:\s*[-_. ]\s*(?:S|Saison)\s*\d+.*)?$
 
 RCLONE_PATH=rclone
 RCLONE_REMOTE=b2                  # remote rclone configurée sur B2
@@ -124,19 +121,19 @@ JOB_MAX_WAIT=14400
 
 ## Déroulé d'un job
 
-1. `/dl url:<url-complete>` → bot valide → `POST /jobs {url, vpn}` → `job_id`
+1. `/dl url nombre:2` → bot valide → `POST /jobs {url, season:2, extra}` → `job_id`
 2. worker (file sérielle) :
-   a. déduit `anime_name`/`saison_info` de l'URL (même logique que l'outil), donc
-      `series_slug`/`season` connus **avant** de lancer quoi que ce soit
-   b. `python main.py --url <url> --dest TOOL_OUTPUT_DIR --episodes all --player ... --mp4 ...` (cwd = TOOL_CWD)
-   c. dossier attendu = `TOOL_OUTPUT_DIR/<anime_name>/<saison_info>/` (déterministe, pas de devinette)
-   d. `zip` streamé directement vers B2 (`rclone rcat`, pas de fichier zip local)
-   e. `download_url = B2_PUBLIC_BASE/<series_slug>/<zip_name>`
-   f. upsert `series` (+ TMDB si pas en cache) et `seasons`
-   g. `catalog.build()` → écrit le site dans `CATALOG_LOCAL`
-   h. `rclone sync CATALOG_LOCAL b2:<bucket>/catalog/`
-   i. job `done` avec `download_url`, tailles, chronos
-   j. si `KEEP_LOCAL=false` → supprime le dossier local (jamais de zip local, streamé direct)
+   a. snapshot de `TOOL_OUTPUT_DIR`
+   b. `cdlr.exe --url <url> --saison 2 <TOOL_EXTRA>` (cwd = TOOL_CWD)
+   c. détecte le nouveau dossier → `series_slug` via `SERIES_REGEX`
+   d. `zip` du dossier → `<Série> - Saison 02.zip` (local temp)
+   e. `rclone copy <zip> b2:<bucket>/<series_slug>/`
+   f. `download_url = B2_PUBLIC_BASE/<series_slug>/<zip_name>`
+   g. upsert `series` (+ TMDB si pas en cache) et `seasons`
+   h. `catalog.build()` → écrit le site dans `CATALOG_LOCAL`
+   i. `rclone sync CATALOG_LOCAL b2:<bucket>/catalog/`
+   j. job `done` avec `download_url`, tailles, chronos
+   k. si `KEEP_LOCAL=false` → supprime le dossier + le zip locaux
 3. bot : encadré ✅ avec le lien du zip ; récap dans `#logs` ; poste la nouveauté
    dans `#library` ; le message épinglé pointe sur `CATALOG_PUBLIC/index.html`
 
@@ -149,9 +146,7 @@ catalog/
 └── assets/style.css
 ```
 
-JS minimal (recherche client-side sur l'accueil). Régénéré entièrement à
-chaque job (rapide, quelques Ko). Un panel `/admin` (jeton) permet d'éditer/
-fusionner/supprimer des séries en dehors du flux de téléchargement.
+Pas de JS requis. Régénéré entièrement à chaque job (rapide, quelques Ko).
 
 ## Plan de migration (ordre)
 

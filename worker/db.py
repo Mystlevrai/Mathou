@@ -93,15 +93,14 @@ def init() -> None:
 
 # --- jobs ---------------------------------------------------------------------
 
-def job_create(job_id: str, url: str, extra: str | None, vpn_country: str | None = None) -> None:
-    """season reste NULL a la creation : Anime-Downloader le derive de l'URL, le pipeline
-    le renseigne via job_update() une fois parse (avant meme de lancer le telechargement)."""
+def job_create(job_id: str, url: str, season: int | None, extra: str | None,
+               vpn_country: str | None = None) -> None:
     now = time.time()
     with _conn() as c:
         c.execute(
-            "INSERT INTO jobs (id, url, extra, vpn_country, status, created_at, updated_at) "
-            "VALUES (?,?,?,?,?,?,?)",
-            (job_id, url, extra, vpn_country, "queued", now, now),
+            "INSERT INTO jobs (id, url, season, extra, vpn_country, status, created_at, updated_at) "
+            "VALUES (?,?,?,?,?,?,?,?)",
+            (job_id, url, season, extra, vpn_country, "queued", now, now),
         )
 
 
@@ -137,16 +136,16 @@ def _norm_url(u: str) -> str:
     return f"{p.scheme}://{p.netloc}{p.path.rstrip('/')}".lower()
 
 
-def job_find_duplicate(url: str) -> dict | None:
-    """Meme URL (normalisee - saison/langue deja dans le chemin) qu'un job deja actif ou
-    deja termine avec succes. -> {'kind': 'active'|'done', ...} ou None. Actif = prioritaire."""
+def job_find_duplicate(url: str, season: int | None) -> dict | None:
+    """Meme URL (normalisee) + meme saison qu'un job deja actif ou deja termine avec succes.
+    -> {'kind': 'active'|'done', ...} ou None. Un job actif est prioritaire."""
     target = _norm_url(url)
     with _conn() as c:
         rows = [dict(r) for r in c.execute(
             "SELECT id, url, season, status, download_url, series_slug, zip_name, size_bytes "
             "FROM jobs ORDER BY updated_at DESC LIMIT 500"
         )]
-    same = [r for r in rows if _norm_url(r["url"]) == target]
+    same = [r for r in rows if r["season"] == season and _norm_url(r["url"]) == target]
     for r in same:
         if r["status"] in _ACTIVE:
             return {"kind": "active", **r}
