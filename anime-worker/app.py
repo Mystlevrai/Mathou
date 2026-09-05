@@ -3,8 +3,12 @@ donc le catalogue) est partagee avec le worker mathou, qui expose deja /admin
 sur son propre port pour l'editer (meme donnees, un seul panel a maintenir)."""
 from __future__ import annotations
 
+import asyncio
 import contextlib
+import json
 import re
+import subprocess
+from pathlib import Path
 from urllib.parse import urlparse
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Request
@@ -17,6 +21,7 @@ from jobqueue import Runner
 cfg = Config.load()
 runner = Runner(cfg)
 _CTRL = re.compile(r"[\x00-\x1f\x7f]")
+_BRIDGE = Path(__file__).with_name("tool_bridge.py")
 
 
 def valid_url(raw: str) -> str:
@@ -74,6 +79,49 @@ class JobIn(BaseModel):
 @app.get("/healthz")
 async def healthz():
     return {"ok": True, "active": db.jobs_active(), "current": runner.current}
+
+
+def _run_bridge(action: str, arg: str, timeout: int = 40) -> list:
+    """Appelle tool_bridge.py avec TOOL_PYTHON/TOOL_CWD (bloquant - a lancer via
+    asyncio.to_thread pour ne pas geler le reste de l'API pendant une recherche)."""
+    try:
+        r = subprocess.run(
+            [cfg.tool_python, str(_BRIDGE), action, arg],
+            cwd=str(cfg.tool_cwd), capture_output=True, text=True,
+            encoding="utf-8", errors="replace", timeout=timeout, check=False,
+        )
+    except subprocess.TimeoutExpired:
+        raise HTTPException(504, "Recherche trop longue, reessaie")
+    out = (r.stdout or "").strip()
+    try:
+        data = json.loads(out) if out else None
+    except json.JSONDecodeError:
+        data = None
+    if isinstance(data, dict) and data.get("error"):
+        err = data["error"]
+        if err in ("cloudflare_cookies_missing", "cloudflare_cookies_expired"):
+            raise HTTPException(
+                502, "Cloudflare bloque anime-sama : relance main.py a la main sur la "
+                     "VM (dans anime-downloader) pour rafraichir le cookie."
+            )
+        raise HTTPException(502, f"Recherche echouee : {err}")
+    if not isinstance(data, list):
+        raise HTTPException(
+            502, f"Reponse invalide de l'outil (code {r.returncode}) : {(r.stderr or r.stdout)[-400:]}"
+        )
+    return data
+
+
+@app.get("/search-anime", dependencies=[Depends(auth)])
+async def search_anime_ep(q: str):
+    data = await asyncio.to_thread(_run_bridge, "search", q)
+    return {"results": data[:20]}
+
+
+@app.get("/search-seasons", dependencies=[Depends(auth)])
+async def search_seasons_ep(url: str):
+    data = await asyncio.to_thread(_run_bridge, "seasons", url)
+    return {"results": data[:25]}
 
 
 @app.post("/jobs", dependencies=[Depends(auth)])

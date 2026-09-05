@@ -155,6 +155,26 @@ class VMClient:
                 raise RuntimeError(data.get("detail") or f"HTTP {r.status}")
             return data.get("results", [])
 
+    async def search_anime(self, q: str) -> list[dict]:
+        """Recherche live sur anime-sama/nakanime (pas le catalogue deja telecharge)."""
+        s = await self._s()
+        timeout = aiohttp.ClientTimeout(total=45)
+        async with s.get(f"{self.base}/search-anime", params={"q": q}, timeout=timeout) as r:
+            data = await r.json()
+            if r.status != 200:
+                raise RuntimeError(data.get("detail") or f"HTTP {r.status}")
+            return data.get("results", [])
+
+    async def search_seasons(self, url: str) -> list[dict]:
+        """Saisons/langues disponibles pour un anime (URL de la page catalogue)."""
+        s = await self._s()
+        timeout = aiohttp.ClientTimeout(total=45)
+        async with s.get(f"{self.base}/search-seasons", params={"url": url}, timeout=timeout) as r:
+            data = await r.json()
+            if r.status != 200:
+                raise RuntimeError(data.get("detail") or f"HTTP {r.status}")
+            return data.get("results", [])
+
 
 vm = VMClient(VM_API_BASE, API_TOKEN)
 
@@ -351,37 +371,16 @@ VPN_CHOICES = [
 ]
 
 
-@client.tree.command(name="dl", description="Telecharge une saison (anime-sama/nakanime) et la met en ligne")
-@app_commands.describe(
-    lien="URL complete de la saison (ex: https://anime-sama.fr/catalogue/<anime>/saison1/vostfr/)",
-    vpn="Pays du VPN pour ce telechargement. Laisser vide = pas de VPN",
-)
-@app_commands.choices(vpn=VPN_CHOICES)
-@app_commands.checks.cooldown(1, float(DL_COOLDOWN), key=lambda i: 0)  # global : 1 /dl toutes les N s, tout le monde confondu
-async def dl(
-    interaction: discord.Interaction,
-    lien: str,
-    vpn: app_commands.Choice[str] | None = None,
-) -> None:
-    if not is_allowed(interaction.user):
-        await interaction.response.send_message("Non autorise.", ephemeral=True)
-        return
-    url = clean_url(lien)
-    if not url:
-        await interaction.response.send_message("Lien invalide (http/https).", ephemeral=True)
-        return
-    vpn_code = vpn.value if vpn else None
-    await interaction.response.defer(thinking=True)
+async def _submit_and_track(channel, url: str, vpn_code: str | None, requester) -> tuple[bool, str | None]:
+    """Soumet le job, poste l'embed (ou le message de doublon) dans `channel`, lance le
+    suivi si besoin. Retourne (ok, message_erreur) - message_erreur est a montrer a
+    l'appelant (ephemere/edit) uniquement quand ok=False."""
     try:
         res = await vm.submit(url, vpn_code)
     except VMBusy:
-        await interaction.edit_original_response(
-            content="⏳ Un autre telechargement est en cours. Reessaie dans quelques minutes."
-        )
-        return
+        return False, "⏳ Un autre telechargement est en cours. Reessaie dans quelques minutes."
     except Exception as exc:  # noqa: BLE001
-        await interaction.edit_original_response(content=f"Impossible de joindre la VM : {exc}")
-        return
+        return False, f"Impossible de joindre la VM : {exc}"
 
     if res.get("status") == "duplicate_done":
         emb = discord.Embed(title="✅ Deja dans le catalogue", colour=discord.Colour.green(),
@@ -395,8 +394,8 @@ async def dl(
             emb.add_field(name="Telechargement (.zip)", value=res["download_url"][:1024], inline=False)
         if CATALOG_URL:
             emb.add_field(name="Catalogue", value=CATALOG_URL, inline=False)
-        await interaction.edit_original_response(embed=emb)
-        return
+        await channel.send(embed=emb)
+        return True, None
 
     if res.get("status") == "duplicate_active":
         where = f" Elle apparaitra dans <#{LIBRARY_CHANNEL_ID}> quand ce sera pret." if LIBRARY_CHANNEL_ID else ""
@@ -406,18 +405,169 @@ async def dl(
         )
         emb.add_field(name="Lien", value=url[:1024], inline=False)
         emb.set_footer(text=f"job {res.get('job_id', '?')}")
-        await interaction.edit_original_response(embed=emb)
-        return
+        await channel.send(embed=emb)
+        return True, None
 
     job_id = res["job_id"]
     state = {"status": "queued", "job_id": job_id, "vpn_country": vpn_code}
-    if interaction.channel is not None:
-        msg = await interaction.channel.send(embed=build_embed(url, state))
-        with contextlib.suppress(discord.HTTPException):
-            await interaction.delete_original_response()
-    else:
-        msg = await interaction.followup.send(embed=build_embed(url, state), wait=True)
-    spawn(track(msg, url, job_id, interaction.user))
+    msg = await channel.send(embed=build_embed(url, state))
+    spawn(track(msg, url, job_id, requester))
+    return True, None
+
+
+def _site_tag(r: dict) -> str:
+    bits = [r.get("site") or ""]
+    if r.get("support") and r["support"] not in ("Anime Supported", None):
+        bits.append(r["support"])
+    return " - ".join(b for b in bits if b)
+
+
+class SeasonSelect(discord.ui.Select):
+    def __init__(self, seasons: list[dict], vpn_code: str | None, requester) -> None:
+        self.seasons = seasons
+        self.vpn_code = vpn_code
+        self.requester = requester
+        options = [
+            discord.SelectOption(label=s["name"][:100], value=str(i))
+            for i, s in enumerate(seasons[:25])
+        ]
+        super().__init__(placeholder="Choisis la saison / langue...", options=options)
+
+    async def callback(self, interaction: discord.Interaction) -> None:
+        chosen = self.seasons[int(self.values[0])]
+        await interaction.response.defer()
+        channel = interaction.channel or interaction.user
+        ok, err = await _submit_and_track(channel, chosen["url"], self.vpn_code, self.requester)
+        if ok:
+            await interaction.edit_original_response(
+                content=f"C'est parti pour **{chosen['name']}** — suis la progression ci-dessous.", view=None
+            )
+        else:
+            await interaction.edit_original_response(content=err, view=None)
+
+
+class SeasonView(discord.ui.View):
+    def __init__(self, seasons: list[dict], vpn_code: str | None, requester) -> None:
+        super().__init__(timeout=120)
+        self.requester = requester
+        self.message: discord.Message | None = None
+        self.add_item(SeasonSelect(seasons, vpn_code, requester))
+
+    async def interaction_check(self, interaction: discord.Interaction) -> bool:
+        if interaction.user.id != self.requester.id:
+            await interaction.response.send_message("Ce menu n'est pas pour toi.", ephemeral=True)
+            return False
+        return True
+
+    async def on_timeout(self) -> None:
+        if self.message:
+            with contextlib.suppress(discord.HTTPException):
+                await self.message.edit(content="⌛ Menu expire, relance `/dl`.", view=None)
+
+
+class AnimeSelect(discord.ui.Select):
+    def __init__(self, results: list[dict], vpn_code: str | None, requester) -> None:
+        self.results = results
+        self.vpn_code = vpn_code
+        self.requester = requester
+        options = [
+            discord.SelectOption(label=r["title"][:100], description=_site_tag(r)[:100] or None, value=str(i))
+            for i, r in enumerate(results[:25])
+        ]
+        super().__init__(placeholder="Choisis l'anime...", options=options)
+
+    async def callback(self, interaction: discord.Interaction) -> None:
+        chosen = self.results[int(self.values[0])]
+        await interaction.response.defer()
+        try:
+            seasons = await vm.search_seasons(chosen["url"])
+        except Exception as exc:  # noqa: BLE001
+            await interaction.edit_original_response(content=f"Erreur : {exc}", view=None)
+            return
+        if not seasons:
+            await interaction.edit_original_response(
+                content=f"Aucune saison/langue trouvee pour **{chosen['title']}**.", view=None
+            )
+            return
+        view = SeasonView(seasons, self.vpn_code, self.requester)
+        await interaction.edit_original_response(
+            content=f"**{chosen['title']}** — choisis la saison/langue :", view=view
+        )
+        view.message = await interaction.original_response()
+
+
+class AnimeSelectView(discord.ui.View):
+    def __init__(self, results: list[dict], vpn_code: str | None, requester) -> None:
+        super().__init__(timeout=120)
+        self.requester = requester
+        self.message: discord.Message | None = None
+        self.add_item(AnimeSelect(results, vpn_code, requester))
+
+    async def interaction_check(self, interaction: discord.Interaction) -> bool:
+        if interaction.user.id != self.requester.id:
+            await interaction.response.send_message("Ce menu n'est pas pour toi.", ephemeral=True)
+            return False
+        return True
+
+    async def on_timeout(self) -> None:
+        if self.message:
+            with contextlib.suppress(discord.HTTPException):
+                await self.message.edit(content="⌛ Menu expire, relance `/dl`.", view=None)
+
+
+@client.tree.command(name="dl", description="Telecharge une saison (anime-sama/nakanime) - lien direct OU recherche par nom")
+@app_commands.describe(
+    lien="URL complete de la saison (ex: https://anime-sama.fr/catalogue/<anime>/saison1/vostfr/)",
+    nom="Ou : nom de l'anime a chercher sur anime-sama/nakanime (sans lien)",
+    vpn="Pays du VPN pour ce telechargement. Laisser vide = pas de VPN",
+)
+@app_commands.choices(vpn=VPN_CHOICES)
+@app_commands.checks.cooldown(1, float(DL_COOLDOWN), key=lambda i: 0)  # global : 1 /dl toutes les N s, tout le monde confondu
+async def dl(
+    interaction: discord.Interaction,
+    lien: str | None = None,
+    nom: str | None = None,
+    vpn: app_commands.Choice[str] | None = None,
+) -> None:
+    if not is_allowed(interaction.user):
+        await interaction.response.send_message("Non autorise.", ephemeral=True)
+        return
+    if bool(lien) == bool(nom):
+        await interaction.response.send_message(
+            "Donne soit `lien` (URL complete), soit `nom` (recherche) - pas les deux, pas aucun.",
+            ephemeral=True,
+        )
+        return
+    vpn_code = vpn.value if vpn else None
+
+    if lien:
+        url = clean_url(lien)
+        if not url:
+            await interaction.response.send_message("Lien invalide (http/https).", ephemeral=True)
+            return
+        await interaction.response.defer(thinking=True)
+        channel = interaction.channel or interaction.user
+        ok, err = await _submit_and_track(channel, url, vpn_code, interaction.user)
+        if ok:
+            with contextlib.suppress(discord.HTTPException):
+                await interaction.delete_original_response()
+        else:
+            await interaction.edit_original_response(content=err)
+        return
+
+    # recherche par nom : anime-sama/nakanime, pas le catalogue deja telecharge (-> /chercher)
+    await interaction.response.defer(thinking=True)
+    try:
+        results = await vm.search_anime(nom)
+    except Exception as exc:  # noqa: BLE001
+        await interaction.edit_original_response(content=f"Erreur de recherche : {exc}")
+        return
+    if not results:
+        await interaction.edit_original_response(content="Aucun resultat sur anime-sama/nakanime.")
+        return
+    view = AnimeSelectView(results, vpn_code, interaction.user)
+    await interaction.edit_original_response(content=f"Resultats pour **{nom}** :", view=view)
+    view.message = await interaction.original_response()
 
 
 @dl.error
@@ -432,8 +582,8 @@ async def dl_error(interaction: discord.Interaction, error: app_commands.AppComm
     raise error
 
 
-@client.tree.command(name="chercher", description="Cherche une serie dans le catalogue")
-@app_commands.describe(nom="Nom (ou partie) de la serie")
+@client.tree.command(name="chercher", description="Cherche dans ce qui est DEJA telecharge (catalogue). Pour chercher sur anime-sama, utilise /dl nom:")
+@app_commands.describe(nom="Nom (ou partie) de la serie deja dans le catalogue")
 async def chercher(interaction: discord.Interaction, nom: str) -> None:
     await interaction.response.defer(thinking=True, ephemeral=True)
     try:
