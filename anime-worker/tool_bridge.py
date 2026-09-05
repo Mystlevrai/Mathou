@@ -12,6 +12,8 @@ bloque anime-sama et qu'aucun cookie valide n'est en cache, echoue proprement
 avec un message clair plutot que de pendre indefiniment en tache de fond."""
 from __future__ import annotations
 
+import contextlib
+import io
 import json
 import sys
 
@@ -79,20 +81,24 @@ def cmd_players(url: str, headers: dict) -> list:
 
 def main() -> int:
     if len(sys.argv) < 3:
-        print(json.dumps({"error": "usage: tool_bridge.py <search|seasons> <arg>"}))
+        print(json.dumps({"error": "usage: tool_bridge.py <search|seasons|players> <arg>"}))
         return 1
     action, arg = sys.argv[1], sys.argv[2]
+    if action not in ("search", "seasons", "players"):
+        print(json.dumps({"error": f"commande inconnue: {action}"}))
+        return 1
     try:
         headers = _headers()
-        if action == "search":
-            data = cmd_search(arg, headers)
-        elif action == "seasons":
-            data = cmd_seasons(arg, headers)
-        elif action == "players":
-            data = cmd_players(arg, headers)
-        else:
-            print(json.dumps({"error": f"commande inconnue: {action}"}))
-            return 1
+        # l'outil imprime sa propre progression (print_status, colorée) sur stdout ;
+        # on l'avale dans un buffer pour que SEUL le JSON final sorte sur le vrai stdout
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            if action == "search":
+                data = cmd_search(arg, headers)
+            elif action == "seasons":
+                data = cmd_seasons(arg, headers)
+            else:
+                data = cmd_players(arg, headers)
         print(json.dumps(data))
         return 0
     except Exception as exc:  # noqa: BLE001
