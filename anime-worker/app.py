@@ -66,6 +66,7 @@ def auth(
 class JobIn(BaseModel):
     url: str
     vpn: str | None = None
+    player: str | None = None
 
     @field_validator("url")
     @classmethod
@@ -124,6 +125,12 @@ async def search_seasons_ep(url: str):
     return {"results": data[:25]}
 
 
+@app.get("/search-players", dependencies=[Depends(auth)])
+async def search_players_ep(url: str):
+    data = await asyncio.to_thread(_run_bridge, "players", url)
+    return {"results": data[:25]}
+
+
 @app.post("/jobs", dependencies=[Depends(auth)])
 async def create_job(body: JobIn):
     # deduplication : meme URL (saison/langue deja dedans) deja en ligne ou en cours -> pas de 2e job
@@ -137,7 +144,7 @@ async def create_job(body: JobIn):
         return {"job_id": dup["id"], "status": "duplicate_active"}
     if db.jobs_active() >= cfg.max_queue:
         raise HTTPException(429, "File pleine, reessaie plus tard")
-    job_id = await runner.submit(body.url, (body.vpn or "").strip() or None)
+    job_id = await runner.submit(body.url, (body.vpn or "").strip() or None, (body.player or "").strip() or None)
     return {"job_id": job_id, "status": "queued"}
 
 
@@ -153,6 +160,7 @@ async def get_job(job_id: str):
         "url": job["url"],
         "season": job.get("season"),
         "vpn_country": job.get("vpn_country"),
+        "player": job.get("player"),
         "series_slug": job.get("series_slug"),
         "zip_name": job.get("zip_name"),
         "size_bytes": job.get("size_bytes"),

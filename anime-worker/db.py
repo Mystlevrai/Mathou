@@ -31,6 +31,7 @@ CREATE TABLE IF NOT EXISTS jobs (
     season        INTEGER,
     extra         TEXT,
     vpn_country   TEXT,
+    player        TEXT,
     status        TEXT NOT NULL,
     error         TEXT,
     log           TEXT,
@@ -88,7 +89,7 @@ def _conn() -> sqlite3.Connection:
 
 # colonnes ajoutees apres coup (ALTER si une vieille base existe deja)
 _MIGRATIONS = {
-    "jobs": {"progress_bytes": "INTEGER", "progress_total": "INTEGER", "vpn_country": "TEXT"},
+    "jobs": {"progress_bytes": "INTEGER", "progress_total": "INTEGER", "vpn_country": "TEXT", "player": "TEXT"},
     "seasons": {"label": "TEXT"},
 }
 
@@ -105,15 +106,17 @@ def init() -> None:
 
 # --- jobs ---------------------------------------------------------------------
 
-def job_create(job_id: str, url: str, extra: str | None, vpn_country: str | None = None) -> None:
+def job_create(job_id: str, url: str, extra: str | None, vpn_country: str | None = None,
+               player: str | None = None) -> None:
     """season reste NULL a la creation : Anime-Downloader le derive de l'URL, le pipeline
-    le renseigne via job_update() une fois parse (avant meme de lancer le telechargement)."""
+    le renseigne via job_update() une fois parse (avant meme de lancer le telechargement).
+    player=None -> le pipeline utilise TOOL_PLAYER (config) par defaut."""
     now = time.time()
     with _conn() as c:
         c.execute(
-            "INSERT INTO jobs (id, url, extra, vpn_country, status, created_at, updated_at) "
-            "VALUES (?,?,?,?,?,?,?)",
-            (job_id, url, extra, vpn_country, "queued", now, now),
+            "INSERT INTO jobs (id, url, extra, vpn_country, player, status, created_at, updated_at) "
+            "VALUES (?,?,?,?,?,?,?,?)",
+            (job_id, url, extra, vpn_country, player, "queued", now, now),
         )
 
 

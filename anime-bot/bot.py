@@ -118,10 +118,12 @@ class VMClient:
         if self._session and not self._session.closed:
             await self._session.close()
 
-    async def submit(self, url: str, vpn: str | None = None) -> dict:
+    async def submit(self, url: str, vpn: str | None = None, player: str | None = None) -> dict:
         payload: dict = {"url": url}
         if vpn:
             payload["vpn"] = vpn
+        if player:
+            payload["player"] = player
         s = await self._s()
         async with s.post(f"{self.base}/jobs", json=payload) as r:
             data = await r.json()
@@ -175,6 +177,16 @@ class VMClient:
                 raise RuntimeError(data.get("detail") or f"HTTP {r.status}")
             return data.get("results", [])
 
+    async def search_players(self, url: str) -> list[dict]:
+        """Players disponibles pour une saison/langue (URL exacte, saison+langue incluses)."""
+        s = await self._s()
+        timeout = aiohttp.ClientTimeout(total=45)
+        async with s.get(f"{self.base}/search-players", params={"url": url}, timeout=timeout) as r:
+            data = await r.json()
+            if r.status != 200:
+                raise RuntimeError(data.get("detail") or f"HTTP {r.status}")
+            return data.get("results", [])
+
 
 vm = VMClient(VM_API_BASE, API_TOKEN)
 
@@ -218,6 +230,8 @@ def build_embed(url: str, state: dict) -> discord.Embed:
         emb.add_field(name="Saison", value=str(state["season"]), inline=True)
     if state.get("vpn_country"):
         emb.add_field(name="VPN", value=str(state["vpn_country"]), inline=True)
+    if state.get("player"):
+        emb.add_field(name="Player", value=str(state["player"]), inline=True)
     if state.get("size_bytes"):
         emb.add_field(name="Poids", value=human_size(state["size_bytes"]), inline=True)
     if status in ("running", "uploading"):
@@ -371,12 +385,13 @@ VPN_CHOICES = [
 ]
 
 
-async def _submit_and_track(channel, url: str, vpn_code: str | None, requester) -> tuple[bool, str | None]:
+async def _submit_and_track(channel, url: str, vpn_code: str | None, requester,
+                            player: str | None = None) -> tuple[bool, str | None]:
     """Soumet le job, poste l'embed (ou le message de doublon) dans `channel`, lance le
     suivi si besoin. Retourne (ok, message_erreur) - message_erreur est a montrer a
     l'appelant (ephemere/edit) uniquement quand ok=False."""
     try:
-        res = await vm.submit(url, vpn_code)
+        res = await vm.submit(url, vpn_code, player)
     except VMBusy:
         return False, "⏳ Un autre telechargement est en cours. Reessaie dans quelques minutes."
     except Exception as exc:  # noqa: BLE001
@@ -409,7 +424,7 @@ async def _submit_and_track(channel, url: str, vpn_code: str | None, requester) 
         return True, None
 
     job_id = res["job_id"]
-    state = {"status": "queued", "job_id": job_id, "vpn_country": vpn_code}
+    state = {"status": "queued", "job_id": job_id, "vpn_country": vpn_code, "player": player}
     msg = await channel.send(embed=build_embed(url, state))
     spawn(track(msg, url, job_id, requester))
     return True, None
@@ -420,6 +435,56 @@ def _site_tag(r: dict) -> str:
     if r.get("support") and r["support"] not in ("Anime Supported", None):
         bits.append(r["support"])
     return " - ".join(b for b in bits if b)
+
+
+class PlayerSelect(discord.ui.Select):
+    def __init__(self, season_name: str, url: str, players: list[dict], vpn_code: str | None, requester) -> None:
+        self.season_name = season_name
+        self.url = url
+        self.players = players
+        self.vpn_code = vpn_code
+        self.requester = requester
+        options = [
+            discord.SelectOption(
+                label=p["name"][:100],
+                description=(f"{p['episodes']} episode(s)" if p.get("episodes") else None),
+                value=str(i),
+            )
+            for i, p in enumerate(players[:25])
+        ]
+        super().__init__(placeholder="Choisis le lecteur (player)...", options=options)
+
+    async def callback(self, interaction: discord.Interaction) -> None:
+        player_name = self.players[int(self.values[0])]["name"]
+        await interaction.response.defer()
+        channel = interaction.channel or interaction.user
+        ok, err = await _submit_and_track(channel, self.url, self.vpn_code, self.requester, player_name)
+        if ok:
+            await interaction.edit_original_response(
+                content=f"C'est parti pour **{self.season_name}** ({player_name}) — suis la progression ci-dessous.",
+                view=None,
+            )
+        else:
+            await interaction.edit_original_response(content=err, view=None)
+
+
+class PlayerView(discord.ui.View):
+    def __init__(self, season_name: str, url: str, players: list[dict], vpn_code: str | None, requester) -> None:
+        super().__init__(timeout=120)
+        self.requester = requester
+        self.message: discord.Message | None = None
+        self.add_item(PlayerSelect(season_name, url, players, vpn_code, requester))
+
+    async def interaction_check(self, interaction: discord.Interaction) -> bool:
+        if interaction.user.id != self.requester.id:
+            await interaction.response.send_message("Ce menu n'est pas pour toi.", ephemeral=True)
+            return False
+        return True
+
+    async def on_timeout(self) -> None:
+        if self.message:
+            with contextlib.suppress(discord.HTTPException):
+                await self.message.edit(content="⌛ Menu expire, relance `/dl`.", view=None)
 
 
 class SeasonSelect(discord.ui.Select):
@@ -436,14 +501,21 @@ class SeasonSelect(discord.ui.Select):
     async def callback(self, interaction: discord.Interaction) -> None:
         chosen = self.seasons[int(self.values[0])]
         await interaction.response.defer()
-        channel = interaction.channel or interaction.user
-        ok, err = await _submit_and_track(channel, chosen["url"], self.vpn_code, self.requester)
-        if ok:
+        try:
+            players = await vm.search_players(chosen["url"])
+        except Exception as exc:  # noqa: BLE001
+            await interaction.edit_original_response(content=f"Erreur : {exc}", view=None)
+            return
+        if not players:
             await interaction.edit_original_response(
-                content=f"C'est parti pour **{chosen['name']}** — suis la progression ci-dessous.", view=None
+                content=f"Aucun lecteur trouve pour **{chosen['name']}**.", view=None
             )
-        else:
-            await interaction.edit_original_response(content=err, view=None)
+            return
+        view = PlayerView(chosen["name"], chosen["url"], players, self.vpn_code, self.requester)
+        await interaction.edit_original_response(
+            content=f"**{chosen['name']}** — choisis le lecteur :", view=view
+        )
+        view.message = await interaction.original_response()
 
 
 class SeasonView(discord.ui.View):

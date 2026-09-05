@@ -19,6 +19,7 @@ sys.path.insert(0, ".")
 
 from src.utils.check.is_cloudflare_here import check_if_cloudflare_enabled  # noqa: E402
 from src.utils.config.config import check_cookies, get_cookies  # noqa: E402
+from src.utils.fetch.fetch_episodes import fetch_episodes  # noqa: E402
 from src.utils.search.expand_catalogue import expand_catalogue_url  # noqa: E402
 from src.utils.search.search_anime import search_anime  # noqa: E402
 from src.var import generate_requests_headers, get_domain  # noqa: E402
@@ -54,6 +55,21 @@ def cmd_seasons(url: str, headers: dict) -> list:
     return [o for o in options if "/scan" not in (o.get("url") or "").lower()]
 
 
+# players dont TOUS les episodes viennent de sources mortes/malveillantes (cf README
+# de l'outil : vk.com/myvi.tv "Deprecated - Unsupported/Malicious")
+_BAD_DOMAINS = ("vk.com", "myvi.tv")
+
+
+def cmd_players(url: str, headers: dict) -> list:
+    episodes = fetch_episodes(url, headers=headers) or {}
+    names = []
+    for name, urls in episodes.items():
+        if urls and all(any(d in (u or "").lower() for d in _BAD_DOMAINS) for u in urls):
+            continue
+        names.append({"name": name, "episodes": len(urls)})
+    return names
+
+
 def main() -> int:
     if len(sys.argv) < 3:
         print(json.dumps({"error": "usage: tool_bridge.py <search|seasons> <arg>"}))
@@ -65,6 +81,8 @@ def main() -> int:
             data = cmd_search(arg, headers)
         elif action == "seasons":
             data = cmd_seasons(arg, headers)
+        elif action == "players":
+            data = cmd_players(arg, headers)
         else:
             print(json.dumps({"error": f"commande inconnue: {action}"}))
             return 1

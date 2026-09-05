@@ -124,7 +124,8 @@ def _dur(s: float) -> str:
     return f"{m}m{sec:02d}s" if m else f"{sec}s"
 
 
-def process(job_id: str, url: str, cfg: Config, vpn_country: str | None = None) -> None:
+def process(job_id: str, url: str, cfg: Config, vpn_country: str | None = None,
+            player: str | None = None) -> None:
     local_folder: Path | None = None
     vpn_on = False
     try:
@@ -188,7 +189,7 @@ def process(job_id: str, url: str, cfg: Config, vpn_country: str | None = None) 
         cmd = [
             cfg.tool_python, str(cfg.tool_script),
             "--url", url, "--dest", str(cfg.tool_output_dir),
-            "--episodes", "all", "--player", cfg.tool_player,
+            "--episodes", "all", "--player", (player or cfg.tool_player),
             "--threads", "--fast", "--mp4", "--tool", "ffmpeg", "--no-mal",
         ] + list(cfg.tool_extra)
         cmd_line = subprocess.list2cmdline(cmd)

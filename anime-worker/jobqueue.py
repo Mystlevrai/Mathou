@@ -27,9 +27,9 @@ class Runner:
             except asyncio.CancelledError:
                 pass
 
-    async def submit(self, url: str, vpn_country: str | None = None) -> str:
+    async def submit(self, url: str, vpn_country: str | None = None, player: str | None = None) -> str:
         job_id = uuid.uuid4().hex[:12]
-        db.job_create(job_id, url, None, vpn_country)
+        db.job_create(job_id, url, None, vpn_country, player)
         await self.queue.put(job_id)
         return job_id
 
@@ -54,7 +54,7 @@ class Runner:
             self.current = job_id
             try:
                 await asyncio.to_thread(pipeline.process, job_id, job["url"],
-                                        self.cfg, job.get("vpn_country"))
+                                        self.cfg, job.get("vpn_country"), job.get("player"))
             finally:
                 self.current = None
                 self.queue.task_done()
