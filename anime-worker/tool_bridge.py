@@ -15,6 +15,13 @@ from __future__ import annotations
 import json
 import sys
 
+# le code de l'outil imprime des emojis (print_status) dans sa progression ; en
+# sous-processus sans vrai terminal, la console Windows retombe sur cp1252/charmap
+# et ca crashe (UnicodeEncodeError). On force UTF-8 sur stdout/stderr avant tout.
+for _stream in (sys.stdout, sys.stderr):
+    if hasattr(_stream, "reconfigure"):
+        _stream.reconfigure(encoding="utf-8", errors="replace")
+
 sys.path.insert(0, ".")
 
 from src.utils.check.is_cloudflare_here import check_if_cloudflare_enabled  # noqa: E402

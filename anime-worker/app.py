@@ -6,6 +6,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import json
+import os
 import re
 import subprocess
 from pathlib import Path
@@ -85,11 +86,12 @@ async def healthz():
 def _run_bridge(action: str, arg: str, timeout: int = 40) -> list:
     """Appelle tool_bridge.py avec TOOL_PYTHON/TOOL_CWD (bloquant - a lancer via
     asyncio.to_thread pour ne pas geler le reste de l'API pendant une recherche)."""
+    env = {**os.environ, "PYTHONUTF8": "1", "PYTHONIOENCODING": "utf-8"}
     try:
         r = subprocess.run(
             [cfg.tool_python, str(_BRIDGE), action, arg],
             cwd=str(cfg.tool_cwd), capture_output=True, text=True,
-            encoding="utf-8", errors="replace", timeout=timeout, check=False,
+            encoding="utf-8", errors="replace", timeout=timeout, check=False, env=env,
         )
     except subprocess.TimeoutExpired:
         raise HTTPException(504, "Recherche trop longue, reessaie")
