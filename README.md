@@ -5,6 +5,9 @@ les met sur Backblaze B2, et tient un catalogue web (grille + affiches TMDB).
 
 Voir **[ARCHITECTURE.md](ARCHITECTURE.md)** pour la vue d'ensemble et les décisions.
 
+À part : **[verif-bot/](verif-bot/README.md)** — vérification de compte par QR code
+(bot séparé, tourne sur ton PC).
+
 ```
 /dl <url> nombre:<saison>   →  bot  →  worker (VM Windows)
                                         cdlr → zip → rclone B2 → catalogue

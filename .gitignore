@@ -10,3 +10,5 @@ venv/
 # ancien layout (remplace par worker/)
 /vm/downloads/
 /downloads/
+# verif-bot : liste des comptes autorises (donnees perso, reste sur le PC)
+verif-bot/liste.txt

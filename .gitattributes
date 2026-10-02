@@ -1,0 +1,2 @@
+# scripts Windows : CRLF au checkout (cmd.exe gere mal goto/labels en LF)
+*.bat text eol=crlf

@@ -1,0 +1,12 @@
+# Comptes reconnus par verif-bot : UN PAR LIGNE.
+#
+# Mets de preference l'ID Discord (il ne change jamais) :
+#   Parametres utilisateur > Avances > Mode developpeur, puis clic droit sur le membre > Copier l'identifiant
+# Le nom d'utilisateur marche aussi (pas le pseudo d'affichage), mais la personne peut le changer.
+#
+# Tout ce qui suit un # est ignore : pratique pour noter a qui correspond un ID.
+# Le fichier est relu a chaque verification : pas besoin de redemarrer le bot.
+#
+# Exemples (retire le # en debut de ligne pour les activer) :
+# 123456789012345678   # Jean
+# marie_42             # Marie
