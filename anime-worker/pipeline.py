@@ -2,6 +2,7 @@
 -> upsert catalogue -> sync catalogue."""
 from __future__ import annotations
 
+import os
 import re
 import subprocess
 import threading
@@ -64,9 +65,12 @@ def _run_shell(cmd_str: str, timeout: int | None = None) -> subprocess.Completed
 
 def _run_tool(cmd: list[str], timeout: int | None, cwd: Path | None) -> subprocess.CompletedProcess:
     """Anime-Downloader : stdio herite (-> worker.log), stdin neutre (--url/--episodes/--player
-    sont fournis pour rester non-interactif ; DEVNULL coupe court si jamais il demandait un input)."""
+    sont fournis pour rester non-interactif ; DEVNULL coupe court si jamais il demandait un input).
+    UTF-8 force : lance par run-session.cmd, le stdout herite est le FICHIER worker.log (pas une
+    console) -> sinon Python retombe sur cp1252 et l'outil crashe au 1er emoji (cf tool_bridge.py)."""
+    env = {**os.environ, "PYTHONUTF8": "1", "PYTHONIOENCODING": "utf-8"}
     return subprocess.run(
-        cmd, stdin=subprocess.DEVNULL,
+        cmd, stdin=subprocess.DEVNULL, env=env,
         timeout=timeout, cwd=str(cwd) if cwd else None, check=False,
     )
 
