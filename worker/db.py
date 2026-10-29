@@ -19,6 +19,7 @@ CREATE TABLE IF NOT EXISTS jobs (
     season        INTEGER,
     extra         TEXT,
     vpn_country   TEXT,
+    worker        TEXT,
     status        TEXT NOT NULL,
     error         TEXT,
     log           TEXT,
@@ -66,6 +67,13 @@ CREATE TABLE IF NOT EXISTS tmdb_cache (
 """
 
 
+# la table jobs est PARTAGEE par les deux workers (meme mathou.db) : chaque job est
+# marque du worker qui l'a cree, pour qu'un redemarrage ne touche qu'a ses propres jobs
+WORKER = "mathou"
+# jobs d'avant la colonne worker (NULL) : attribues d'apres l'URL
+_LEGACY_MINE = "NOT (url LIKE '%anime-sama.%' OR url LIKE '%nakanime.%')"
+
+
 def _conn() -> sqlite3.Connection:
     c = sqlite3.connect(DB_PATH, timeout=30)
     c.row_factory = sqlite3.Row
@@ -76,7 +84,7 @@ def _conn() -> sqlite3.Connection:
 
 # colonnes ajoutees apres coup (ALTER si une vieille base existe deja)
 _MIGRATIONS = {
-    "jobs": {"progress_bytes": "INTEGER", "progress_total": "INTEGER", "vpn_country": "TEXT"},
+    "jobs": {"progress_bytes": "INTEGER", "progress_total": "INTEGER", "vpn_country": "TEXT", "worker": "TEXT"},
     "seasons": {"label": "TEXT"},
 }
 
@@ -98,9 +106,9 @@ def job_create(job_id: str, url: str, season: int | None, extra: str | None,
     now = time.time()
     with _conn() as c:
         c.execute(
-            "INSERT INTO jobs (id, url, season, extra, vpn_country, status, created_at, updated_at) "
-            "VALUES (?,?,?,?,?,?,?,?)",
-            (job_id, url, season, extra, vpn_country, "queued", now, now),
+            "INSERT INTO jobs (id, url, season, extra, vpn_country, worker, status, created_at, updated_at) "
+            "VALUES (?,?,?,?,?,?,?,?,?)",
+            (job_id, url, season, extra, vpn_country, WORKER, "queued", now, now),
         )
 
 
@@ -156,12 +164,15 @@ def job_find_duplicate(url: str, season: int | None) -> dict | None:
 
 
 def jobs_reset_orphans() -> None:
-    """Au demarrage : les jobs non termines ne peuvent pas reprendre -> erreur."""
+    """Au demarrage : les jobs non termines de CE worker ne peuvent pas reprendre -> erreur.
+    Jamais ceux de l'anime-worker (table partagee) : sinon redemarrer un worker marquait en
+    erreur le job en cours de l'autre."""
     with _conn() as c:
         c.execute(
             "UPDATE jobs SET status='error', error='Worker redemarre pendant le job', updated_at=? "
-            "WHERE status IN ('queued','running','zipping','uploading')",
-            (time.time(),),
+            "WHERE status IN ('queued','running','zipping','uploading') "
+            f"AND (worker=? OR (worker IS NULL AND {_LEGACY_MINE}))",
+            (time.time(), WORKER),
         )
 
 

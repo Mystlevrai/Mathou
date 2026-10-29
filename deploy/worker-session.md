@@ -56,10 +56,10 @@ Get-Content C:\mathou\worker\worker.log -Tail 20
 ## Exploitation
 
 - Voir les logs : `Get-Content C:\mathou\worker\worker.log -Wait -Tail 30`
-- Redemarrer le worker : fermer la fenetre `cmd` du worker (elle se relance seule
-  via `run-session.cmd`), ou :
+- Redemarrer le worker : cibler le process qui ecoute le port 8756 (pas tous les
+  python : l'anime-worker tourne aussi) ; sa fenetre `cmd` le relance en 5s :
   ```powershell
-  Get-Process python | Where-Object { $_.Path -like "*mathou*" } | Stop-Process -Force
+  Stop-Process -Id (Get-NetTCPConnection -LocalPort 8756 -State Listen).OwningProcess -Force
   ```
 - Mise a jour : `powershell -File C:\mathou\deploy\deploy-worker.ps1`
 - **Ne jamais se "Deconnecter" de Windows** (fermer la session) : se **deconnecter

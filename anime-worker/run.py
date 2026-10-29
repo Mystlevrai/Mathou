@@ -43,5 +43,7 @@ if __name__ == "__main__":
     c = Config.load()
     if not _acquire_singleton() or _port_busy(c.port):
         print(f"[run.py] un anime-worker tourne deja -> on n'en lance pas un 2e.", flush=True)
-        raise SystemExit(0)
+        # code 3 = "deja lance" : run-session.cmd ferme alors sa boucle au lieu de
+        # relancer python toutes les 5s pour rien (fenetre lancee en double)
+        raise SystemExit(3)
     uvicorn.run("app:app", host=c.host, port=c.port, log_level="info", access_log=False)

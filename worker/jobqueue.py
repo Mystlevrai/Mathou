@@ -7,6 +7,7 @@ import uuid
 import db
 import pipeline
 from config import Config
+from vmlock import download_slot
 
 
 class Runner:
@@ -15,6 +16,8 @@ class Runner:
         self.queue: asyncio.Queue[str] = asyncio.Queue()
         self._task: asyncio.Task | None = None
         self.current: str | None = None
+        # job sorti de la file mais qui attend que l'autre worker libere la VM
+        self.waiting: str | None = None
 
     def start(self) -> None:
         self._task = asyncio.create_task(self._loop())
@@ -47,14 +50,32 @@ class Runner:
     async def _loop(self) -> None:
         while True:
             job_id = await self.queue.get()
-            job = db.job_get(job_id)
-            if not job or job["status"] != "queued":
-                self.queue.task_done()
-                continue
-            self.current = job_id
             try:
-                await asyncio.to_thread(pipeline.process, job_id, job["url"], job["season"],
-                                        self.cfg, job.get("vpn_country"))
+                await asyncio.to_thread(self._run_job, job_id)
             finally:
-                self.current = None
                 self.queue.task_done()
+
+    def _run_job(self, job_id: str) -> None:
+        """Thread du job : attend le creneau de telechargement de la VM (partage avec
+        l'autre worker, cf vmlock.py), puis lance le pipeline."""
+        def _on_wait() -> None:
+            print(f"[{job_id}] en attente : l'autre worker telecharge deja", flush=True)
+
+        job = db.job_get(job_id)
+        if not job or job["status"] != "queued":  # annule pendant qu'il etait en file
+            return
+        self.waiting = job_id
+        try:
+            with download_slot(_on_wait):
+                self.waiting = None
+                # statut relu APRES l'attente : le job a pu etre annule entre-temps
+                job = db.job_get(job_id)
+                if not job or job["status"] != "queued":
+                    return
+                self.current = job_id
+                try:
+                    pipeline.process(job_id, job["url"], job["season"], self.cfg, job.get("vpn_country"))
+                finally:
+                    self.current = None
+        finally:
+            self.waiting = None

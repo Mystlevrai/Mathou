@@ -3,9 +3,8 @@
 Le catalogue (series/seasons/tmdb_cache) est PARTAGE avec le worker mathou
 (cdlr) : DB_PATH pointe par defaut sur mathou/worker/mathou.db, pour que les
 deux outils alimentent le meme catalogue. Voir anime-worker/.env DB_PATH.
-Consequence acceptee : jobs_reset_orphans() au demarrage de l'un peut, en cas
-de collision de timing tres rare, marquer en erreur un job en cours de l'autre
-outil (rien de destructif : juste a relancer)."""
+La table jobs est partagee aussi : chaque job porte le worker qui l'a cree
+(colonne worker), et jobs_reset_orphans() ne touche qu'aux jobs de CE worker."""
 from __future__ import annotations
 
 import os
@@ -31,6 +30,7 @@ CREATE TABLE IF NOT EXISTS jobs (
     season        INTEGER,
     extra         TEXT,
     vpn_country   TEXT,
+    worker        TEXT,
     player        TEXT,
     status        TEXT NOT NULL,
     error         TEXT,
@@ -79,6 +79,13 @@ CREATE TABLE IF NOT EXISTS tmdb_cache (
 """
 
 
+# la table jobs est PARTAGEE par les deux workers (meme mathou.db) : chaque job est
+# marque du worker qui l'a cree, pour qu'un redemarrage ne touche qu'a ses propres jobs
+WORKER = "anime"
+# jobs d'avant la colonne worker (NULL) : attribues d'apres l'URL
+_LEGACY_MINE = "(url LIKE '%anime-sama.%' OR url LIKE '%nakanime.%')"
+
+
 def _conn() -> sqlite3.Connection:
     c = sqlite3.connect(DB_PATH, timeout=30)
     c.row_factory = sqlite3.Row
@@ -89,7 +96,7 @@ def _conn() -> sqlite3.Connection:
 
 # colonnes ajoutees apres coup (ALTER si une vieille base existe deja)
 _MIGRATIONS = {
-    "jobs": {"progress_bytes": "INTEGER", "progress_total": "INTEGER", "vpn_country": "TEXT", "player": "TEXT"},
+    "jobs": {"progress_bytes": "INTEGER", "progress_total": "INTEGER", "vpn_country": "TEXT", "worker": "TEXT", "player": "TEXT"},
     "seasons": {"label": "TEXT"},
 }
 
@@ -114,9 +121,9 @@ def job_create(job_id: str, url: str, extra: str | None, vpn_country: str | None
     now = time.time()
     with _conn() as c:
         c.execute(
-            "INSERT INTO jobs (id, url, extra, vpn_country, player, status, created_at, updated_at) "
-            "VALUES (?,?,?,?,?,?,?,?)",
-            (job_id, url, extra, vpn_country, player, "queued", now, now),
+            "INSERT INTO jobs (id, url, extra, vpn_country, player, worker, status, created_at, updated_at) "
+            "VALUES (?,?,?,?,?,?,?,?,?)",
+            (job_id, url, extra, vpn_country, player, WORKER, "queued", now, now),
         )
 
 
@@ -172,12 +179,15 @@ def job_find_duplicate(url: str) -> dict | None:
 
 
 def jobs_reset_orphans() -> None:
-    """Au demarrage : les jobs non termines ne peuvent pas reprendre -> erreur."""
+    """Au demarrage : les jobs non termines de CE worker ne peuvent pas reprendre -> erreur.
+    Jamais ceux du worker mathou (table partagee) : sinon redemarrer un worker marquait en
+    erreur le job en cours de l'autre."""
     with _conn() as c:
         c.execute(
             "UPDATE jobs SET status='error', error='Worker redemarre pendant le job', updated_at=? "
-            "WHERE status IN ('queued','running','zipping','uploading')",
-            (time.time(),),
+            "WHERE status IN ('queued','running','zipping','uploading') "
+            f"AND (worker=? OR (worker IS NULL AND {_LEGACY_MINE}))",
+            (time.time(), WORKER),
         )
 
 

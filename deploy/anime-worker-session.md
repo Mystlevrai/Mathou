@@ -22,12 +22,9 @@ curl.exe -s http://localhost:8757/healthz   # anime-worker
 ## Exploitation
 
 - Logs : `Get-Content C:\mathou\anime-worker\worker.log -Wait -Tail 30`
-- Redemarrer : fermer la fenetre `cmd` de l'anime-worker (elle se relance seule),
-  ou cibler le bon process par ligne de commande (ne jamais tuer tous les
-  `python.exe` : ca couperait aussi mathou) :
+- Redemarrer : cibler le process qui ecoute le port 8757 (ne jamais tuer tous les
+  `python.exe` : ca couperait aussi mathou) ; sa fenetre `cmd` le relance en 5s :
   ```powershell
-  Get-CimInstance Win32_Process -Filter "Name='python.exe'" |
-    Where-Object { $_.CommandLine -like "*anime-worker*run.py*" } |
-    ForEach-Object { Stop-Process -Id $_.ProcessId -Force }
+  Stop-Process -Id (Get-NetTCPConnection -LocalPort 8757 -State Listen).OwningProcess -Force
   ```
 - Mise a jour : `powershell -File C:\mathou\deploy\deploy-anime-worker.ps1`

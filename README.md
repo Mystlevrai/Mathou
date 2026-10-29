@@ -114,13 +114,17 @@ scopes `bot` + `applications.commands`. Créer les salons `#logs` et
 ### Déployer une mise à jour
 
 ```bash
-# bot (sur le VPS)
+# bots (sur le VPS)
 bash /opt/mathou/deploy/deploy-bot.sh
+bash /opt/mathou/deploy/deploy-anime-bot.sh
 ```
 ```powershell
-# worker (sur la VM)
-powershell -File C:\mathou\deploy\deploy-worker.ps1
+# les deux workers (sur la VM, dans la session RDP) : un worker occupe n'est pas
+# coupe, relancer le script quand il a fini (-Force pour le couper quand meme)
+powershell -ExecutionPolicy Bypass -File C:\mathou\deploy\deploy-vm.ps1
 ```
+Un seul telechargement a la fois sur la VM, tous workers confondus : un `/dl` lance
+pendant un job de l'autre outil reste "En file d'attente" jusqu'a ce qu'il finisse.
 
 ### Commandes Discord
 

@@ -80,7 +80,8 @@ class JobIn(BaseModel):
 
 @app.get("/healthz")
 async def healthz():
-    return {"ok": True, "active": db.jobs_active(), "current": runner.current}
+    return {"ok": True, "active": db.jobs_active(), "current": runner.current,
+            "waiting": runner.waiting, "queued": runner.queue.qsize()}
 
 
 def _run_bridge(action: str, arg: str, timeout: int = 40) -> list:
