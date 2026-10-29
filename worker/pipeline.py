@@ -45,6 +45,16 @@ def _run_tool(cmd: list[str], timeout: int | None, cwd: Path | None) -> subproce
     )
 
 
+def _mask(arg: str) -> str:
+    """Valeur d'un argument de TOOL_EXTRA masquee pour l'affichage : la ligne de commande
+    finit dans worker.log, la base et l'encadre Discord (ex : --etp-rt <jeton Crunchyroll>
+    = acces au compte). Les flags seuls (--vostfr) restent lisibles."""
+    if arg.startswith("-"):
+        flag, eq, _ = arg.partition("=")
+        return f"{flag}=***" if eq else arg
+    return "***"
+
+
 def _tail(*chunks: str, limit: int = 6000) -> str:
     return "\n".join(c.strip() for c in chunks if c and c.strip())[-limit:]
 
@@ -154,8 +164,9 @@ def process(job_id: str, url: str, season: int | None, cfg: Config,
         cmd = [cfg.tool_path, cfg.tool_url_flag, url]
         if season is not None:
             cmd += [cfg.tool_season_flag, str(season)]
-        cmd += list(cfg.tool_extra)
-        cmd_line = subprocess.list2cmdline(cmd)
+        extra = list(cfg.tool_extra)
+        cmd += extra
+        cmd_line = subprocess.list2cmdline(cmd[:len(cmd) - len(extra)] + [_mask(a) for a in extra])
         print(f"[{job_id}] cmd> {cmd_line}", flush=True)
         db.job_update(job_id, status="running", log=f"cmd> {cmd_line}")
 
