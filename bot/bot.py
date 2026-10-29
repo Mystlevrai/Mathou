@@ -38,7 +38,7 @@ CATALOG_URL = os.getenv("CATALOG_URL", "").strip()
 ALLOWED_USER_IDS = {int(x) for x in os.getenv("ALLOWED_USER_IDS", "").replace(" ", "").split(",") if x}
 ALLOWED_ROLE_ID = _int_env("ALLOWED_ROLE_ID", 0)
 POLL_SECONDS = _int_env("POLL_SECONDS", 3)
-JOB_MAX_WAIT = _int_env("JOB_MAX_WAIT", 14400)
+JOB_MAX_WAIT = _int_env("JOB_MAX_WAIT", 0)  # 0 = suivi illimite
 DL_COOLDOWN = _int_env("DL_COOLDOWN", 10)
 
 STATUS_LABELS = {
